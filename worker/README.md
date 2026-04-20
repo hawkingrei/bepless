@@ -38,6 +38,19 @@ shape, and returns the same summary/findings response schema as `/analyze`.
 
 ```bash
 cd worker
+npm install
 cargo check
-wrangler dev
+npm run dev
 ```
+
+## Deploy
+
+```bash
+cd worker
+npm install
+npm run deploy
+```
+
+`wrangler.toml` bootstraps `worker-build` with Cargo during deployment, so a clean environment does
+not need a preinstalled `worker-build` binary. The deployment environment still needs a working Rust
+toolchain because `worker-build` compiles the Rust worker to WebAssembly.
