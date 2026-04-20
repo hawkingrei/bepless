@@ -1344,14 +1344,14 @@ fn html_response() -> Result<Response> {
 
             <section class="grid-2">
               <section class="panel">
-                <h2>Slowest Tests</h2>
-                <ul id="slow-tests-list">
+                <h2>Cache Overview</h2>
+                <ul id="cache-overview-list">
                   <li class="muted">No analysis yet.</li>
                 </ul>
               </section>
               <section class="panel">
-                <h2>Top Action Mnemonics</h2>
-                <ul id="actions-list">
+                <h2>Flaky Tests</h2>
+                <ul id="flaky-tests-list">
                   <li class="muted">No analysis yet.</li>
                 </ul>
               </section>
@@ -1359,11 +1359,50 @@ fn html_response() -> Result<Response> {
 
             <section class="grid-2">
               <section class="panel">
+                <h2>Top Compile Time</h2>
+                <ul id="compile-top-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+              <section class="panel">
+                <h2>Top IO Time</h2>
+                <ul id="io-top-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+            </section>
+
+            <section class="grid-2">
+              <section class="panel">
+                <h2>Top Test Time</h2>
+                <ul id="slow-tests-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+              <section class="panel">
+                <h2>Cache Miss Reasons</h2>
+                <ul id="cache-miss-reasons-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+            </section>
+
+            <section class="grid-2">
+              <section class="panel">
+                <h2>Top Action Mnemonics</h2>
+                <ul id="actions-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+              <section class="panel">
                 <h2>Runner Counts</h2>
                 <ul id="runner-counts-list">
                   <li class="muted">No analysis yet.</li>
                 </ul>
               </section>
+            </section>
+
+            <section class="grid-2">
               <section class="panel">
                 <h2>Timing Breakdown</h2>
                 <ul id="timing-breakdown-list">
@@ -1393,6 +1432,11 @@ fn html_response() -> Result<Response> {
       const summaryGrid = document.getElementById("summary-grid");
       const findingsList = document.getElementById("findings-list");
       const failedTargetsList = document.getElementById("failed-targets-list");
+      const cacheOverviewList = document.getElementById("cache-overview-list");
+      const cacheMissReasonsList = document.getElementById("cache-miss-reasons-list");
+      const flakyTestsList = document.getElementById("flaky-tests-list");
+      const compileTopList = document.getElementById("compile-top-list");
+      const ioTopList = document.getElementById("io-top-list");
       const slowTestsList = document.getElementById("slow-tests-list");
       const actionsList = document.getElementById("actions-list");
       const runnerCountsList = document.getElementById("runner-counts-list");
@@ -1419,6 +1463,185 @@ fn html_response() -> Result<Response> {
       function formatPercent(value) {
         if (value === null || value === undefined) return "n/a";
         return `${(value * 100).toFixed(1)}%`;
+      }
+
+      function toNumber(value) {
+        if (value === null || value === undefined || value === "") return null;
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+
+      function parseDurationMs(value) {
+        if (value === null || value === undefined) return null;
+        if (typeof value === "number" && Number.isFinite(value)) return value;
+        if (typeof value !== "string") return null;
+
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+        if (/^\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+
+        const match = trimmed.match(/^(-?\d+(?:\.\d+)?)(ms|s|m)$/);
+        if (!match) return null;
+
+        const amount = Number(match[1]);
+        const unit = match[2];
+        if (unit === "ms") return amount;
+        if (unit === "s") return amount * 1000;
+        if (unit === "m") return amount * 60_000;
+        return null;
+      }
+
+      function isCompileMnemonic(name) {
+        const lower = String(name || "").toLowerCase();
+        return [
+          "compile",
+          "link",
+          "javac",
+          "kotlinc",
+          "scalac",
+          "swift",
+          "rustc",
+          "tsproject",
+          "tsc",
+          "protoc",
+          "modulemap"
+        ].some((keyword) => lower.includes(keyword)) || /^(go|cc|cpp|objc)/.test(lower);
+      }
+
+      function isIOTimingName(name) {
+        return [
+          "parsetime",
+          "fetchtime",
+          "queuetime",
+          "uploadtime",
+          "setuptime",
+          "processoutputstime",
+          "networktime",
+          "downloadtime",
+          "cachechecktime",
+          "filesystemtime",
+          "iotime"
+        ].includes(String(name || "").toLowerCase());
+      }
+
+      function sumIOTimingMs(node) {
+        if (!node || typeof node !== "object") return 0;
+        let total = 0;
+
+        if (isIOTimingName(node.name)) {
+          total += parseDurationMs(node.time) || 0;
+        }
+
+        if (Array.isArray(node.child)) {
+          for (const child of node.child) {
+            total += sumIOTimingMs(child);
+          }
+        }
+
+        return total;
+      }
+
+      function isFlakyTest(test) {
+        if (!test) return false;
+        if (test.status === "FLAKY") return true;
+        const attemptCount = toNumber(test.attempt_count);
+        const totalRunCount = toNumber(test.total_run_count);
+        return (attemptCount !== null && attemptCount > 1) || (totalRunCount !== null && totalRunCount > 1);
+      }
+
+      function summarizeBrowserInsights(input) {
+        const compileItems = [];
+        const ioItems = [];
+        const tests = [];
+        const flakyTests = [];
+        const cacheMissReasons = new Map();
+        let cacheOverview = null;
+
+        for (const rawLine of input.split("\n")) {
+          const line = rawLine.trim();
+          if (!line) continue;
+
+          const event = JSON.parse(line);
+          const buildMetrics = event.buildMetrics;
+          if (buildMetrics && buildMetrics.actionSummary) {
+            const actionSummary = buildMetrics.actionSummary;
+            const actionCacheStatistics = actionSummary.actionCacheStatistics || {};
+            cacheOverview = {
+              remote_hits: toNumber(actionSummary.remoteCacheHits),
+              action_hits: toNumber(actionCacheStatistics.hits),
+              action_misses: toNumber(actionCacheStatistics.misses),
+            };
+
+            for (const detail of actionCacheStatistics.missDetails || []) {
+              const reason = detail.reason || "UNKNOWN";
+              const count = toNumber(detail.count) || 0;
+              cacheMissReasons.set(reason, (cacheMissReasons.get(reason) || 0) + count);
+            }
+
+            for (const entry of actionSummary.actionData || []) {
+              const mnemonic = entry.mnemonic || "unknown";
+              if (!isCompileMnemonic(mnemonic)) continue;
+
+              const firstStartedMs = toNumber(entry.firstStartedMs) || 0;
+              const lastEndedMs = toNumber(entry.lastEndedMs) || 0;
+              compileItems.push({
+                name: mnemonic,
+                actions_executed: toNumber(entry.actionsExecuted) || 0,
+                duration_ms: Math.max(0, lastEndedMs - firstStartedMs),
+                user_time_ms: parseDurationMs(entry.userTime),
+                system_time_ms: parseDurationMs(entry.systemTime),
+              });
+            }
+          }
+
+          if (event.id && event.id.testSummary && event.testSummary) {
+            const summary = event.testSummary;
+            const test = {
+              label: event.id.testSummary.label || "<unknown>",
+              status: summary.overallStatus || "UNKNOWN",
+              duration_ms: toNumber(summary.totalRunDurationMillis)
+                ?? toNumber(summary.totalRunDurationInMs)
+                ?? parseDurationMs(summary.totalRunDuration)
+                ?? 0,
+              cached: summary.totalNumCached === null || summary.totalNumCached === undefined
+                ? null
+                : Number(summary.totalNumCached) > 0,
+              attempt_count: toNumber(summary.attemptCount),
+              run_count: toNumber(summary.runCount),
+              total_run_count: toNumber(summary.totalRunCount),
+            };
+
+            tests.push(test);
+            if (isFlakyTest(test)) {
+              flakyTests.push(test);
+            }
+          }
+
+          if (event.id && event.id.testResult && event.testResult && event.testResult.executionInfo) {
+            const testResult = event.testResult;
+            const ioMs = sumIOTimingMs(testResult.executionInfo.timingBreakdown);
+            ioItems.push({
+              name: event.id.testResult.label || "<unknown>",
+              duration_ms: ioMs,
+              strategy: testResult.executionInfo.strategy || "n/a",
+              status: testResult.status || "UNKNOWN",
+            });
+          }
+        }
+
+        compileItems.sort((left, right) => right.duration_ms - left.duration_ms);
+        ioItems.sort((left, right) => right.duration_ms - left.duration_ms);
+        tests.sort((left, right) => right.duration_ms - left.duration_ms);
+        flakyTests.sort((left, right) => right.duration_ms - left.duration_ms);
+
+        return {
+          cacheOverview,
+          cacheMissReasons: Array.from(cacheMissReasons.entries()).sort((left, right) => right[1] - left[1]),
+          topCompileItems: compileItems.slice(0, 10),
+          topIoItems: ioItems.filter((item) => item.duration_ms > 0).slice(0, 10),
+          topTests: tests.slice(0, 10),
+          flakyTests: flakyTests.slice(0, 10),
+        };
       }
 
       function createListItems(container, items, render, emptyText) {
@@ -1498,8 +1721,116 @@ fn html_response() -> Result<Response> {
         `).join("");
       }
 
-      function renderAnalysis(payload) {
+      function renderBrowserInsights(insights) {
+        createListItems(
+          cacheOverviewList,
+          insights.cacheOverview ? [insights.cacheOverview] : [],
+          (item) => {
+            const hits = item.action_hits;
+            const misses = item.action_misses;
+            const ratio = hits !== null && misses !== null && hits + misses > 0
+              ? hits / (hits + misses)
+              : null;
+
+            return `
+              <li>
+                <div class="split-line">
+                  <strong>Action Cache</strong>
+                  <span class="badge">${formatPercent(ratio)}</span>
+                </div>
+                <div class="muted" style="margin-top: 8px;">
+                  hits=${hits ?? "n/a"} misses=${misses ?? "n/a"} remote_hits=${item.remote_hits ?? "n/a"}
+                </div>
+              </li>
+            `;
+          },
+          "No cache metrics in this BEP."
+        );
+
+        createListItems(
+          cacheMissReasonsList,
+          insights.cacheMissReasons,
+          ([reason, count]) => `
+            <li class="split-line">
+              <span>${reason}</span>
+              <span class="badge">${count}</span>
+            </li>
+          `,
+          "No cache miss reason breakdown."
+        );
+
+        createListItems(
+          compileTopList,
+          insights.topCompileItems,
+          (item) => `
+            <li>
+              <div class="split-line">
+                <strong>${item.name}</strong>
+                <span class="badge">${formatMs(item.duration_ms)}</span>
+              </div>
+              <div class="muted" style="margin-top: 8px;">
+                actions=${item.actions_executed} user=${formatMs(item.user_time_ms)} system=${formatMs(item.system_time_ms)}
+              </div>
+            </li>
+          `,
+          "No compile-classified actions."
+        );
+
+        createListItems(
+          ioTopList,
+          insights.topIoItems,
+          (item) => `
+            <li>
+              <div class="split-line">
+                <strong class="mono">${item.name}</strong>
+                <span class="badge">${formatMs(item.duration_ms)}</span>
+              </div>
+              <div class="muted" style="margin-top: 8px;">
+                strategy=${item.strategy} status=${item.status}
+              </div>
+            </li>
+          `,
+          "No IO timing breakdown found."
+        );
+
+        createListItems(
+          flakyTestsList,
+          insights.flakyTests,
+          (item) => `
+            <li>
+              <div class="split-line">
+                <strong class="mono">${item.label}</strong>
+                <span class="badge">${formatMs(item.duration_ms)}</span>
+              </div>
+              <div class="muted" style="margin-top: 8px;">
+                status=${item.status} attempts=${item.attempt_count ?? "n/a"} total_runs=${item.total_run_count ?? "n/a"}
+              </div>
+            </li>
+          `,
+          "No flaky test signal found."
+        );
+
+        createListItems(
+          slowTestsList,
+          insights.topTests,
+          (item) => `
+            <li>
+              <div class="split-line">
+                <strong class="mono">${item.label}</strong>
+                <span class="badge">${formatMs(item.duration_ms)}</span>
+              </div>
+              <div class="muted" style="margin-top: 8px;">
+                status=${item.status} cached=${item.cached === null ? "n/a" : String(item.cached)} attempts=${item.attempt_count ?? "n/a"}
+              </div>
+            </li>
+          `,
+          "No test summaries."
+        );
+      }
+
+      function renderAnalysis(payload, browserInsights) {
         renderSummary(payload.summary);
+        renderBrowserInsights(browserInsights);
 
         createListItems(findingsList, payload.findings, (item) => `
           <li class="finding-${item.severity}">
@@ -1514,18 +1845,6 @@ fn html_response() -> Result<Response> {
         createListItems(failedTargetsList, payload.failed_targets, (item) => `
           <li><span class="mono">${item}</span></li>
         `, "No failed targets.");
-
-        createListItems(slowTestsList, payload.slowest_tests, (item) => `
-          <li>
-            <div class="split-line">
-              <strong class="mono">${item.label}</strong>
-              <span class="badge">${formatMs(item.duration_ms)}</span>
-            </div>
-            <div class="muted" style="margin-top: 8px;">
-              status=${item.status} cached=${item.cached === null || item.cached === undefined ? "n/a" : String(item.cached)}
-            </div>
-          </li>
-        `, "No test summaries.");
 
         createListItems(actionsList, payload.top_action_mnemonics, (item) => `
           <li>
@@ -1568,6 +1887,11 @@ fn html_response() -> Result<Response> {
         summaryGrid.innerHTML = "";
         findingsList.innerHTML = '<li class="muted">No analysis yet.</li>';
         failedTargetsList.innerHTML = '<li class="muted">No analysis yet.</li>';
+        cacheOverviewList.innerHTML = '<li class="muted">No analysis yet.</li>';
+        cacheMissReasonsList.innerHTML = '<li class="muted">No analysis yet.</li>';
+        flakyTestsList.innerHTML = '<li class="muted">No analysis yet.</li>';
+        compileTopList.innerHTML = '<li class="muted">No analysis yet.</li>';
+        ioTopList.innerHTML = '<li class="muted">No analysis yet.</li>';
         slowTestsList.innerHTML = '<li class="muted">No analysis yet.</li>';
         actionsList.innerHTML = '<li class="muted">No analysis yet.</li>';
         runnerCountsList.innerHTML = '<li class="muted">No analysis yet.</li>';
@@ -1586,6 +1910,7 @@ fn html_response() -> Result<Response> {
         analyzeBtn.disabled = true;
 
         try {
+          const browserInsights = summarizeBrowserInsights(body);
           const response = await fetch("/analyze", {
             method: "POST",
             headers: { "content-type": "text/plain; charset=utf-8" },
@@ -1597,7 +1922,7 @@ fn html_response() -> Result<Response> {
             throw new Error(payload.message || "Request failed");
           }
 
-          renderAnalysis(payload);
+          renderAnalysis(payload, browserInsights);
           renderHistory(saveHistoryEntry(body, payload));
           status.textContent = `Review complete. Parsed invocation ${payload.summary.invocation_id || "n/a"}.`;
         } catch (error) {
