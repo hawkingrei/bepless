@@ -43,6 +43,8 @@ cargo check
 npm run dev
 ```
 
+This directory is pinned to the stable Rust toolchain through `rust-toolchain.toml`.
+
 ## Deploy
 
 ```bash
