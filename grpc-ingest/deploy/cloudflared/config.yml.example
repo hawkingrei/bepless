@@ -1,0 +1,10 @@
+tunnel: <tunnel-uuid>
+credentials-file: /etc/cloudflared/<tunnel-uuid>.json
+
+ingress:
+  - hostname: <grpc-bes-hostname>
+    service: https://127.0.0.1:50051
+    originRequest:
+      http2Origin: true
+      noTLSVerify: true
+  - service: http_status:404

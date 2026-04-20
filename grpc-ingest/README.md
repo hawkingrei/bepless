@@ -90,6 +90,40 @@ sudo systemctl status bepless-grpc-ingest
 journalctl -u bepless-grpc-ingest -f
 ```
 
+## cloudflared Template
+
+If this service sits behind Cloudflare Tunnel on the same private host, a minimal tunnel config
+template is included:
+
+- `deploy/cloudflared/config.yml.example`
+- `deploy/cloudflared/cloudflared.env.example`
+
+The intended routing is:
+
+1. `cloudflared` accepts the public gRPC hostname.
+2. It forwards HTTP/2 traffic to `https://127.0.0.1:50051`.
+3. `bepless-grpc-ingest` handles the BES stream locally.
+
+Suggested install flow:
+
+1. Copy the template:
+
+```bash
+sudo install -d /etc/cloudflared
+sudo install -m 0644 deploy/cloudflared/config.yml.example /etc/cloudflared/config.yml
+```
+
+2. Fill in your private values:
+
+- `tunnel`
+- `credentials-file`
+- `hostname`
+
+3. Keep the local gRPC listener aligned with `BEPLESS_GRPC_LISTEN_ADDR`.
+
+If you run `cloudflared` through a token-based service manager, keep the token in a separate local
+env file and do not reuse the `grpc-ingest` env file for it.
+
 ## Current State
 
 The service now exposes a minimal BES-compatible gRPC surface:
