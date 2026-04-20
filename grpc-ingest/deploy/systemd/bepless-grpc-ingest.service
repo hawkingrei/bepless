@@ -1,0 +1,25 @@
+[Unit]
+Description=bepless grpc-ingest
+Documentation=https://github.com/hawkingrei/bepless
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bepless
+Group=bepless
+WorkingDirectory=/opt/bepless/grpc-ingest
+EnvironmentFile=/etc/bepless/grpc-ingest.env
+ExecStart=/opt/bepless/bin/bepless-grpc-ingest
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGINT
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/bepless
+
+[Install]
+WantedBy=multi-user.target
