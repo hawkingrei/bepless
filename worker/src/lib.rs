@@ -5,7 +5,8 @@ use prost::Message;
 use prost_types::{Duration as ProtoDuration, Timestamp as ProtoTimestamp};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use worker::{event, Context, FormEntry, Method, Request, Response, Result};
+use worker::wasm_bindgen::JsValue;
+use worker::{event, Context, D1Database, FormEntry, Method, Request, Response, Result};
 
 pub mod blaze {
     include!(concat!(env!("OUT_DIR"), "/blaze.rs"));
@@ -63,7 +64,7 @@ struct IngestEnvelope {
     bazel_event_proto_base64: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Summary {
     invocation_id: Option<String>,
     command: Option<String>,
@@ -91,7 +92,7 @@ struct Summary {
     cache_hit_ratio: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SlowTarget {
     label: String,
     duration_ms: u64,
@@ -99,7 +100,7 @@ struct SlowTarget {
     cached: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ActionMnemonic {
     mnemonic: String,
     actions_executed: u64,
@@ -108,14 +109,14 @@ struct ActionMnemonic {
     user_time_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Finding {
-    severity: &'static str,
-    category: &'static str,
+    severity: String,
+    category: String,
     message: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AnalysisResponse {
     summary: Summary,
     slowest_tests: Vec<SlowTarget>,
@@ -125,6 +126,41 @@ struct AnalysisResponse {
     test_strategy_counts: BTreeMap<String, u64>,
     timing_breakdown_ms: BTreeMap<String, u64>,
     findings: Vec<Finding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredReviewListItem {
+    id: i64,
+    source_type: String,
+    project_id: Option<String>,
+    build_id: Option<String>,
+    invocation_id: Option<String>,
+    uploaded_at_ms: i64,
+    summary: Summary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredReviewDetail {
+    id: i64,
+    source_type: String,
+    project_id: Option<String>,
+    build_id: Option<String>,
+    invocation_id: Option<String>,
+    uploaded_at_ms: i64,
+    analysis: AnalysisResponse,
+    ingest_body: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct StoredReviewRow {
+    id: i64,
+    source_type: String,
+    project_id: Option<String>,
+    build_id: Option<String>,
+    invocation_id: Option<String>,
+    uploaded_at_ms: i64,
+    analysis_json: String,
+    ingest_body: String,
 }
 
 #[derive(Debug, Default)]
@@ -417,14 +453,16 @@ impl AnalyzerState {
 }
 
 #[event(fetch)]
-async fn fetch(mut req: Request, _env: worker::Env, _ctx: Context) -> Result<Response> {
+async fn fetch(mut req: Request, env: worker::Env, _ctx: Context) -> Result<Response> {
     console_error_panic_hook::set_once();
 
     match (req.method(), req.path().as_str()) {
         (Method::Options, _) => cors_response(),
         (Method::Get, "/") => html_response(),
+        (Method::Get, "/api/reviews") => list_reviews(&env).await,
+        (Method::Get, path) if path.starts_with("/api/reviews/") => get_review(&env, path).await,
         (Method::Post, "/analyze") => analyze_request(&mut req).await,
-        (Method::Post, "/ingest") => ingest_request(&mut req).await,
+        (Method::Post, "/ingest") => ingest_request(&mut req, &env).await,
         _ => json_error(404, "not_found", "Route not found"),
     }
 }
@@ -442,14 +480,105 @@ async fn analyze_request(req: &mut Request) -> Result<Response> {
     apply_cors(response)
 }
 
-async fn ingest_request(req: &mut Request) -> Result<Response> {
+async fn ingest_request(req: &mut Request, env: &worker::Env) -> Result<Response> {
     let payload = extract_payload(req).await?;
     let content = String::from_utf8(payload)
         .map_err(|_| worker::Error::RustError("Request body is not valid UTF-8".into()))?;
+    let normalized =
+        normalize_ingest_ndjson(&content).map_err(|message| worker::Error::RustError(message))?;
     let result =
-        analyze_ingest_ndjson(&content).map_err(|message| worker::Error::RustError(message))?;
+        analyze_ndjson(&normalized).map_err(|message| worker::Error::RustError(message))?;
+    store_ingest_review(env, &content, &normalized, &result).await?;
 
     let mut response = Response::from_json(&result)?;
+    response
+        .headers_mut()
+        .set("content-type", "application/json; charset=utf-8")?;
+    apply_cors(response)
+}
+
+async fn list_reviews(env: &worker::Env) -> Result<Response> {
+    let db = open_database(env)?;
+    ensure_schema(&db).await?;
+
+    let result = db
+        .prepare(
+            "SELECT id, source_type, project_id, build_id, invocation_id, uploaded_at_ms, analysis_json, ingest_body
+             FROM reviews
+             ORDER BY uploaded_at_ms DESC, id DESC
+             LIMIT 50",
+        )
+        .all()
+        .await?;
+    let rows = result.results::<StoredReviewRow>()?;
+    let mut reviews = Vec::with_capacity(rows.len());
+
+    for row in rows {
+        let analysis: AnalysisResponse =
+            serde_json::from_str(&row.analysis_json).map_err(|err| {
+                worker::Error::RustError(format!(
+                    "Stored review {} has invalid analysis JSON: {}",
+                    row.id, err
+                ))
+            })?;
+        reviews.push(StoredReviewListItem {
+            id: row.id,
+            source_type: row.source_type,
+            project_id: row.project_id,
+            build_id: row.build_id,
+            invocation_id: row.invocation_id,
+            uploaded_at_ms: row.uploaded_at_ms,
+            summary: analysis.summary,
+        });
+    }
+
+    let mut response = Response::from_json(&reviews)?;
+    response
+        .headers_mut()
+        .set("content-type", "application/json; charset=utf-8")?;
+    apply_cors(response)
+}
+
+async fn get_review(env: &worker::Env, path: &str) -> Result<Response> {
+    let review_id = path
+        .trim_start_matches("/api/reviews/")
+        .parse::<i64>()
+        .map_err(|_| worker::Error::RustError("Review id must be an integer".into()))?;
+
+    let db = open_database(env)?;
+    ensure_schema(&db).await?;
+
+    let statement = db
+        .prepare(
+            "SELECT id, source_type, project_id, build_id, invocation_id, uploaded_at_ms, analysis_json, ingest_body
+             FROM reviews
+             WHERE id = ?1
+             LIMIT 1",
+        )
+        .bind(&[JsValue::from_f64(review_id as f64)])?;
+    let row = statement.first::<StoredReviewRow>(None).await?;
+    let Some(row) = row else {
+        return json_error(404, "review_not_found", "Review not found");
+    };
+
+    let analysis: AnalysisResponse = serde_json::from_str(&row.analysis_json).map_err(|err| {
+        worker::Error::RustError(format!(
+            "Stored review {} has invalid analysis JSON: {}",
+            row.id, err
+        ))
+    })?;
+    let payload = StoredReviewDetail {
+        id: row.id,
+        source_type: row.source_type,
+        project_id: row.project_id,
+        build_id: row.build_id,
+        invocation_id: row.invocation_id,
+        uploaded_at_ms: row.uploaded_at_ms,
+        analysis,
+        ingest_body: row.ingest_body,
+    };
+
+    let mut response = Response::from_json(&payload)?;
     response
         .headers_mut()
         .set("content-type", "application/json; charset=utf-8")?;
@@ -500,8 +629,8 @@ fn analyze_ndjson(input: &str) -> std::result::Result<AnalysisResponse, String> 
     Ok(analyzer.finish())
 }
 
-fn analyze_ingest_ndjson(input: &str) -> std::result::Result<AnalysisResponse, String> {
-    let mut analyzer = AnalyzerState::default();
+fn normalize_ingest_ndjson(input: &str) -> std::result::Result<String, String> {
+    let mut normalized = Vec::new();
     let mut parsed_lines = 0usize;
 
     for (line_index, raw_line) in input.lines().enumerate() {
@@ -530,7 +659,7 @@ fn analyze_ingest_ndjson(input: &str) -> std::result::Result<AnalysisResponse, S
         })?;
 
         if let Some(json_event) = convert_proto_event_to_json(&event) {
-            analyzer.ingest(&json_event);
+            normalized.push(json_event.to_string());
             parsed_lines += 1;
         }
     }
@@ -539,7 +668,127 @@ fn analyze_ingest_ndjson(input: &str) -> std::result::Result<AnalysisResponse, S
         return Err("No analyzable BEP events were found in the ingest body".to_string());
     }
 
-    Ok(analyzer.finish())
+    Ok(normalized.join("\n"))
+}
+
+fn open_database(env: &worker::Env) -> Result<D1Database> {
+    env.d1("BEPLESS_DB")
+}
+
+async fn ensure_schema(db: &D1Database) -> Result<()> {
+    db.exec(
+        r#"
+        CREATE TABLE IF NOT EXISTS reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_type TEXT NOT NULL,
+            project_id TEXT,
+            build_id TEXT,
+            invocation_id TEXT,
+            uploaded_at_ms INTEGER NOT NULL,
+            ingest_body TEXT NOT NULL,
+            analysis_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_reviews_uploaded_at ON reviews(uploaded_at_ms DESC, id DESC);
+        "#,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn store_ingest_review(
+    env: &worker::Env,
+    raw_ingest_body: &str,
+    normalized_ingest_body: &str,
+    analysis: &AnalysisResponse,
+) -> Result<()> {
+    let db = open_database(env)?;
+    ensure_schema(&db).await?;
+
+    let metadata = extract_ingest_metadata(raw_ingest_body);
+    let uploaded_at_ms = analysis
+        .summary
+        .finished_at_ms
+        .or(analysis.summary.started_at_ms)
+        .map(|value| value as i64)
+        .unwrap_or(0);
+    let analysis_json = serde_json::to_string(analysis).map_err(|err| {
+        worker::Error::RustError(format!("Failed to serialize analysis payload: {}", err))
+    })?;
+
+    db.prepare(
+        "INSERT INTO reviews (
+            source_type,
+            project_id,
+            build_id,
+            invocation_id,
+            uploaded_at_ms,
+            ingest_body,
+            analysis_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )
+    .bind(&[
+        JsValue::from_str("ingest"),
+        metadata
+            .project_id
+            .as_deref()
+            .map(JsValue::from_str)
+            .unwrap_or_else(JsValue::null),
+        metadata
+            .build_id
+            .as_deref()
+            .map(JsValue::from_str)
+            .unwrap_or_else(JsValue::null),
+        metadata
+            .invocation_id
+            .as_deref()
+            .map(JsValue::from_str)
+            .unwrap_or_else(JsValue::null),
+        JsValue::from_f64(uploaded_at_ms as f64),
+        JsValue::from_str(normalized_ingest_body),
+        JsValue::from_str(&analysis_json),
+    ])?
+    .run()
+    .await?;
+
+    db.prepare(
+        "DELETE FROM reviews
+         WHERE id NOT IN (
+             SELECT id
+             FROM reviews
+             ORDER BY uploaded_at_ms DESC, id DESC
+             LIMIT 50
+         )",
+    )
+    .run()
+    .await?;
+
+    Ok(())
+}
+
+fn extract_ingest_metadata(input: &str) -> IngestMetadata {
+    for raw_line in input.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Ok(envelope) = serde_json::from_str::<IngestEnvelope>(line) {
+            return IngestMetadata {
+                project_id: non_empty_string(envelope.project_id),
+                build_id: non_empty_string(envelope.build_id),
+                invocation_id: non_empty_string(envelope.invocation_id),
+            };
+        }
+    }
+
+    IngestMetadata::default()
+}
+
+#[derive(Debug, Default)]
+struct IngestMetadata {
+    project_id: Option<String>,
+    build_id: Option<String>,
+    invocation_id: Option<String>,
 }
 
 #[allow(deprecated)]
@@ -828,8 +1077,8 @@ fn build_findings(
     {
         if wall_ms > 0 && execution_ms * 100 / wall_ms >= 70 {
             findings.push(Finding {
-                severity: "high",
-                category: "execution",
+                severity: "high".to_string(),
+                category: "execution".to_string(),
                 message: format!(
                     "Execution dominates wall time: execution phase is {} ms out of {} ms wall time.",
                     execution_ms, wall_ms
@@ -841,8 +1090,8 @@ fn build_findings(
     if let (Some(analysis_ms), Some(wall_ms)) = (summary.analysis_phase_ms, summary.wall_time_ms) {
         if wall_ms > 0 && analysis_ms * 100 / wall_ms >= 30 {
             findings.push(Finding {
-                severity: "medium",
-                category: "analysis",
+                severity: "medium".to_string(),
+                category: "analysis".to_string(),
                 message: format!(
                     "Analysis is a visible cost center: analysis phase is {} ms out of {} ms wall time.",
                     analysis_ms, wall_ms
@@ -854,8 +1103,8 @@ fn build_findings(
     if let Some(ratio) = summary.cache_hit_ratio {
         if ratio < 0.60 {
             findings.push(Finding {
-                severity: "high",
-                category: "cache",
+                severity: "high".to_string(),
+                category: "cache".to_string(),
                 message: format!(
                     "Action cache hit ratio is low at {:.1}%. Expect unnecessary rebuild work.",
                     ratio * 100.0
@@ -863,8 +1112,8 @@ fn build_findings(
             });
         } else if ratio < 0.85 {
             findings.push(Finding {
-                severity: "medium",
-                category: "cache",
+                severity: "medium".to_string(),
+                category: "cache".to_string(),
                 message: format!(
                     "Action cache hit ratio is only {:.1}%. There is room to reduce repeated execution.",
                     ratio * 100.0
@@ -878,8 +1127,8 @@ fn build_findings(
     {
         if critical_path_ms > 0 && slowest_test.duration_ms * 100 / critical_path_ms >= 50 {
             findings.push(Finding {
-                severity: "medium",
-                category: "tests",
+                severity: "medium".to_string(),
+                category: "tests".to_string(),
                 message: format!(
                     "A single test is consuming a large portion of the critical path: {} took {} ms, critical path is {} ms.",
                     slowest_test.label, slowest_test.duration_ms, critical_path_ms
@@ -891,8 +1140,8 @@ fn build_findings(
     if let Some(queue_ms) = timing_breakdown_ms.get("queueTime") {
         if *queue_ms > 0 {
             findings.push(Finding {
-                severity: "medium",
-                category: "remote-execution",
+                severity: "medium".to_string(),
+                category: "remote-execution".to_string(),
                 message: format!(
                     "Observed queueTime in test execution breakdowns: {} ms aggregated. Scheduler pressure may be visible.",
                     queue_ms
@@ -904,8 +1153,8 @@ fn build_findings(
     if let Some(network_ms) = timing_breakdown_ms.get("networkTime") {
         if *network_ms > 0 {
             findings.push(Finding {
-                severity: "low",
-                category: "remote-execution",
+                severity: "low".to_string(),
+                category: "remote-execution".to_string(),
                 message: format!(
                     "Observed networkTime in execution breakdowns: {} ms aggregated.",
                     network_ms
@@ -917,8 +1166,8 @@ fn build_findings(
     if let Some(action) = top_actions.first() {
         if action.span_ms > 0 {
             findings.push(Finding {
-                severity: "low",
-                category: "actions",
+                severity: "low".to_string(),
+                category: "actions".to_string(),
                 message: format!(
                     "Longest action mnemonic span is {} at {} ms across {} executed actions.",
                     action.mnemonic, action.span_ms, action.actions_executed
@@ -1020,6 +1269,14 @@ fn apply_cors(mut response: Response) -> Result<Response> {
 
 fn take_non_empty(value: Option<String>) -> Option<String> {
     value.and_then(|inner| if inner.is_empty() { None } else { Some(inner) })
+}
+
+fn non_empty_string(value: String) -> Option<String> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn cors_response() -> Result<Response> {

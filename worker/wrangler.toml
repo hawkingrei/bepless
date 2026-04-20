@@ -6,6 +6,9 @@ workers_dev = true
 [build]
 command = "npm run build:web && cargo install -q --locked worker-build && worker-build --release"
 
+# Configure a D1 binding named `BEPLESS_DB` in your local deployment config.
+# Keep the actual database IDs out of the repository.
+
 [env.dev]
 name = "bep-analyzer-worker-dev"
 

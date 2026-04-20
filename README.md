@@ -5,8 +5,8 @@
 ## Layout
 
 - `worker/`
-  - Cloudflare Worker for the review UI and HTTP-based BEP analysis.
-  - Browser-side rendering and local history retention stay in the client.
+  - Cloudflare Worker for the review UI, HTTP-based BEP analysis, and D1-backed review retention.
+  - Browser-side rendering stays in the client; the worker stores only the latest 50 uploaded reviews.
 - `grpc-ingest/`
   - Thin Rust gRPC ingestion service for BES `PublishBuildToolEventStream`.
   - Intended to run behind a private Cloudflare Tunnel-connected service.
@@ -27,10 +27,8 @@ Put environment-specific values into deployment systems or local environment var
 ## Data Flow
 
 1. Bazel BES clients send gRPC traffic to `grpc-ingest/`.
-2. `grpc-ingest/` normalizes the stream into newline-delimited JSON events.
-3. The review surface can analyze BEP through:
-   - direct HTTP submission to the Worker
-   - object storage or another handoff layer added later
+2. `grpc-ingest/` normalizes the stream and posts invocation payloads to the worker `/ingest` endpoint.
+3. The worker decodes the supported BEP subset, stores the latest 50 uploaded reviews in D1, and serves them back to the browser review page.
 
 ## Status
 

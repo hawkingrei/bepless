@@ -5,16 +5,18 @@ Cloudflare Worker for:
 - review page rendering
 - HTTP-based BEP ingestion
 - gRPC handoff ingestion via `/ingest`
-- stateless analysis of pasted BEP NDJSON
-- browser-local review history retention
+- D1-backed retention for the latest 50 uploaded reviews
+- browser-side rendering of uploaded review details
 
 This directory intentionally contains no deployment secrets.
 
 ## Endpoints
 
-- `GET /`: review page, rendering stays in the browser
-- `POST /analyze`: accepts pasted Bazel BEP NDJSON and returns an analysis summary
-- `POST /ingest`: accepts NDJSON envelopes emitted by `grpc-ingest`
+- `GET /`: review page with Bazel/BES setup guidance and uploaded review browsing
+- `GET /api/reviews`: lists the latest 50 uploaded reviews from D1
+- `GET /api/reviews/:id`: returns one stored review, including the normalized NDJSON used for browser-side rendering
+- `POST /analyze`: accepts Bazel BEP NDJSON and returns an analysis summary
+- `POST /ingest`: accepts NDJSON envelopes emitted by `grpc-ingest`, normalizes them, stores the latest 50 reviews in D1, and returns the analysis payload
 
 ## `/ingest` format
 
@@ -32,7 +34,15 @@ protobuf payload:
 ```
 
 The worker decodes the protobuf payload, maps the supported BEP subset into the local analyzer
-shape, and returns the same summary/findings response schema as `/analyze`.
+shape, persists a normalized NDJSON copy in D1, and returns the same summary/findings response
+schema as `/analyze`.
+
+## D1 Binding
+
+The worker expects a D1 binding named `BEPLESS_DB`.
+
+Add the binding in your Wrangler configuration or local environment before using `/ingest` or the
+review list UI. Keep the actual database IDs out of the repository.
 
 ## Run
 

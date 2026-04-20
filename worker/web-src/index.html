@@ -16,60 +16,86 @@
             <section class="hero">
               <h1>Bazel BEP Review</h1>
               <p>
-                Paste BEP NDJSON or an HTTP ingest body and review the bottlenecks directly:
-                critical path, action cache efficiency, slow tests, action spans, timing breakdowns,
-                and a small set of performance findings.
+                This page is the review surface for BEP uploads that already arrived through BES
+                gRPC handoff or the HTTP ingest path. Rendering stays in the browser; the worker
+                only stores the latest 50 uploaded reviews and serves them back to the UI.
               </p>
               <div class="hero-grid">
-                <section class="panel input-panel">
-                  <div class="label">
-                    <span>Input</span>
-                    <span>Paste BEP NDJSON from BES, logs, or HTTP handoff</span>
+                <section class="panel setup-panel">
+                  <div class="split-line">
+                    <h2>Bazel Setup</h2>
+                    <span class="badge">gRPC BES</span>
                   </div>
-                  <textarea id="source" spellcheck="false" placeholder="Paste BEP NDJSON or ingest NDJSON here"></textarea>
-                  <div class="toolbar">
-                    <button id="analyze-btn" type="button">Run Review</button>
-                    <button id="clear-btn" class="secondary" type="button">Clear</button>
-                    <button id="sample-btn" class="secondary" type="button">Insert Sample</button>
-                  </div>
-                  <div class="status" id="status">Waiting for input.</div>
+                  <p class="section-copy">
+                    Point Bazel at the private gRPC ingress that sits behind Cloudflare Tunnel. The
+                    review UI reads the normalized uploads later from the worker.
+                  </p>
+                  <pre id="bazel-grpc-config"></pre>
                 </section>
 
                 <section class="dashboard">
                   <section class="panel">
-                    <h2>Summary</h2>
-                    <div class="kpi-grid" id="summary-grid"></div>
+                    <div class="split-line">
+                      <h2>Metrics Coverage</h2>
+                      <span class="badge">recommended</span>
+                    </div>
+                    <p class="section-copy">
+                      Keep action and test timing signals enabled so the browser can render cache,
+                      compile, IO, and flaky-test breakdowns from stored uploads.
+                    </p>
+                    <pre id="bazel-metrics-config"></pre>
                   </section>
 
-                  <section class="grid-2">
-                    <section class="panel">
-                      <h2>Findings</h2>
-                      <ul id="findings-list">
-                        <li class="muted">No analysis yet.</li>
-                      </ul>
-                    </section>
-                    <section class="panel">
-                      <h2>Failed Targets</h2>
-                      <ul id="failed-targets-list">
-                        <li class="muted">No analysis yet.</li>
-                      </ul>
-                    </section>
+                  <section class="panel">
+                    <div class="split-line">
+                      <h2>HTTP Handoff</h2>
+                      <span class="badge">grpc-ingest</span>
+                    </div>
+                    <p class="section-copy">
+                      Configure the thin gRPC ingress to post normalized invocation payloads to the
+                      worker. Uploaded records are persisted in D1 and capped at the most recent 50.
+                    </p>
+                    <pre id="sink-config"></pre>
                   </section>
                 </section>
               </div>
+              <div class="status-row">
+                <div class="status" id="status">Loading uploaded reviews...</div>
+                <button id="refresh-btn" class="secondary" type="button">Refresh Reviews</button>
+              </div>
+            </section>
+
+            <section class="panel">
+              <h2>Summary</h2>
+              <div class="kpi-grid" id="summary-grid"></div>
+            </section>
+
+            <section class="grid-2">
+              <section class="panel">
+                <h2>Findings</h2>
+                <ul id="findings-list">
+                  <li class="muted">No uploaded reviews yet.</li>
+                </ul>
+              </section>
+              <section class="panel">
+                <h2>Failed Targets</h2>
+                <ul id="failed-targets-list">
+                  <li class="muted">No uploaded reviews yet.</li>
+                </ul>
+              </section>
             </section>
 
             <section class="grid-2">
               <section class="panel">
                 <h2>Cache Overview</h2>
                 <ul id="cache-overview-list">
-                  <li class="muted">No analysis yet.</li>
+                  <li class="muted">No uploaded reviews yet.</li>
                 </ul>
               </section>
               <section class="panel">
                 <h2>Flaky Tests</h2>
                 <ul id="flaky-tests-list">
-                  <li class="muted">No analysis yet.</li>
+                  <li class="muted">No uploaded reviews yet.</li>
                 </ul>
               </section>
             </section>
@@ -78,13 +104,13 @@
               <section class="panel">
                 <h2>Top Compile Time</h2>
                 <ul id="compile-top-list">
-                  <li class="muted">No analysis yet.</li>
+                  <li class="muted">No uploaded reviews yet.</li>
                 </ul>
               </section>
               <section class="panel">
                 <h2>Top IO Time</h2>
                 <ul id="io-top-list">
-                  <li class="muted">No analysis yet.</li>
+                  <li class="muted">No uploaded reviews yet.</li>
                 </ul>
               </section>
             </section>
@@ -93,13 +119,13 @@
               <section class="panel">
                 <h2>Top Test Time</h2>
                 <ul id="slow-tests-list">
-                  <li class="muted">No analysis yet.</li>
+                  <li class="muted">No uploaded reviews yet.</li>
                 </ul>
               </section>
               <section class="panel">
                 <h2>Cache Miss Reasons</h2>
                 <ul id="cache-miss-reasons-list">
-                  <li class="muted">No analysis yet.</li>
+                  <li class="muted">No uploaded reviews yet.</li>
                 </ul>
               </section>
             </section>
@@ -108,13 +134,13 @@
               <section class="panel">
                 <h2>Top Action Mnemonics</h2>
                 <ul id="actions-list">
-                  <li class="muted">No analysis yet.</li>
+                  <li class="muted">No uploaded reviews yet.</li>
                 </ul>
               </section>
               <section class="panel">
                 <h2>Runner Counts</h2>
                 <ul id="runner-counts-list">
-                  <li class="muted">No analysis yet.</li>
+                  <li class="muted">No uploaded reviews yet.</li>
                 </ul>
               </section>
             </section>
@@ -123,17 +149,17 @@
               <section class="panel">
                 <h2>Timing Breakdown</h2>
                 <ul id="timing-breakdown-list">
-                  <li class="muted">No analysis yet.</li>
+                  <li class="muted">No uploaded reviews yet.</li>
                 </ul>
               </section>
             </section>
           </div>
 
           <aside class="panel">
-            <h2>Recent Reviews</h2>
-            <p class="hint">Only the latest 50 reviews are retained locally in this browser.</p>
+            <h2>Uploaded Reviews</h2>
+            <p class="hint">Only the most recent 50 uploaded reviews are kept in D1.</p>
             <ul id="history-list">
-              <li class="muted">No review history yet.</li>
+              <li class="muted">Loading uploaded reviews...</li>
             </ul>
           </aside>
         </div>

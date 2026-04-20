@@ -1,8 +1,9 @@
-const source = document.getElementById("source");
 const status = document.getElementById("status");
-const analyzeBtn = document.getElementById("analyze-btn");
-const clearBtn = document.getElementById("clear-btn");
-const sampleBtn = document.getElementById("sample-btn");
+const refreshBtn = document.getElementById("refresh-btn");
+const historyList = document.getElementById("history-list");
+const bazelGrpcConfig = document.getElementById("bazel-grpc-config");
+const bazelMetricsConfig = document.getElementById("bazel-metrics-config");
+const sinkConfig = document.getElementById("sink-config");
 
 const summaryGrid = document.getElementById("summary-grid");
 const findingsList = document.getElementById("findings-list");
@@ -16,18 +17,8 @@ const slowTestsList = document.getElementById("slow-tests-list");
 const actionsList = document.getElementById("actions-list");
 const runnerCountsList = document.getElementById("runner-counts-list");
 const timingBreakdownList = document.getElementById("timing-breakdown-list");
-const historyList = document.getElementById("history-list");
 
-const HISTORY_KEY = "bep-review-history-v1";
-const HISTORY_LIMIT = 50;
-
-const sampleText = [
-  '{"id":{"started":{}},"started":{"uuid":"demo-invocation","startTimeMillis":"1714695817843","buildToolVersion":"7.1.0","command":"test"}}',
-  '{"id":{"testSummary":{"label":"//demo:test","configuration":{"id":"fastbuild"}}},"testSummary":{"overallStatus":"PASSED","totalRunDurationMillis":"1134","totalNumCached":0}}',
-  '{"id":{"progress":{"opaqueCount":1}},"progress":{"stderr":"INFO: Elapsed time: 2.598s, Critical Path: 2.22s\\n"}}',
-  '{"id":{"buildMetrics":{}},"buildMetrics":{"actionSummary":{"actionsExecuted":"4","remoteCacheHits":"10","actionCacheStatistics":{"hits":10,"misses":5},"runnerCount":[{"name":"total","count":4},{"name":"darwin-sandbox","count":2}],"actionData":[{"mnemonic":"TestRunner","actionsExecuted":"1","firstStartedMs":"1714695819112","lastEndedMs":"1714695820440","systemTime":"0.356s","userTime":"0.830s"}]},"timingMetrics":{"cpuTimeInMs":"3495","wallTimeInMs":"2565","analysisPhaseTimeInMs":"56","executionPhaseTimeInMs":"2268"}}',
-  '{"id":{"buildFinished":{}},"finished":{"overallSuccess":true,"finishTimeMillis":"1714695820441","exitCode":{"name":"SUCCESS"}}}',
-].join("\n");
+let currentReviewId = null;
 
 function formatMs(value) {
   if (value === null || value === undefined) return "n/a";
@@ -138,7 +129,11 @@ function summarizeBrowserInsights(input) {
     const line = rawLine.trim();
     if (!line) continue;
 
-    const event = JSON.parse(line);
+    const envelope = JSON.parse(line);
+    const payload = envelope.bazel_event_proto_base64 ? null : envelope;
+    const event = payload;
+    if (!event) continue;
+
     const buildMetrics = event.buildMetrics;
     if (buildMetrics && buildMetrics.actionSummary) {
       const actionSummary = buildMetrics.actionSummary;
@@ -231,60 +226,6 @@ function createListItems(container, items, render, emptyText) {
   container.innerHTML = items.map(render).join("");
 }
 
-function readHistory() {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeHistory(history) {
-  const next = history.slice(0, HISTORY_LIMIT);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
-  return next;
-}
-
-function saveHistoryEntry(input, payload) {
-  const history = readHistory().filter((entry) => entry.input !== input);
-  history.unshift({
-    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    created_at: new Date().toISOString(),
-    input,
-    summary: payload.summary,
-  });
-  return writeHistory(history);
-}
-
-function renderHistory() {
-  const history = writeHistory(readHistory());
-  if (history.length === 0) {
-    historyList.innerHTML = '<li class="muted">No review history yet.</li>';
-    return;
-  }
-
-  historyList.innerHTML = history
-    .map(
-      (entry) => `
-        <li class="history-item" data-history-id="${entry.id}">
-          <div class="split-line">
-            <strong class="mono">${entry.summary.invocation_id || entry.summary.command || "unknown"}</strong>
-            <span class="badge">${entry.summary.success === true ? "success" : entry.summary.success === false ? "failed" : "n/a"}</span>
-          </div>
-          <div class="history-meta">
-            <span>${new Date(entry.created_at).toLocaleString()}</span>
-            <span>critical=${formatMs(entry.summary.critical_path_ms)}</span>
-            <span>wall=${formatMs(entry.summary.wall_time_ms ?? entry.summary.elapsed_ms)}</span>
-          </div>
-        </li>
-      `,
-    )
-    .join("");
-}
-
 function renderSummary(summary) {
   const cards = [
     ["Invocation", summary.invocation_id || "n/a"],
@@ -323,7 +264,7 @@ function renderBrowserInsights(insights) {
             <strong>Action Cache</strong>
             <span class="badge">${formatPercent(ratio)}</span>
           </div>
-          <div class="muted" style="margin-top: 8px;">
+          <div class="muted detail-line">
             hits=${hits ?? "n/a"} misses=${misses ?? "n/a"} remote_hits=${item.remote_hits ?? "n/a"}
           </div>
         </li>
@@ -353,7 +294,7 @@ function renderBrowserInsights(insights) {
           <strong>${item.name}</strong>
           <span class="badge">${formatMs(item.duration_ms)}</span>
         </div>
-        <div class="muted" style="margin-top: 8px;">
+        <div class="muted detail-line">
           actions=${item.actions_executed} user=${formatMs(item.user_time_ms)} system=${formatMs(item.system_time_ms)}
         </div>
       </li>
@@ -370,7 +311,7 @@ function renderBrowserInsights(insights) {
           <strong class="mono">${item.name}</strong>
           <span class="badge">${formatMs(item.duration_ms)}</span>
         </div>
-        <div class="muted" style="margin-top: 8px;">
+        <div class="muted detail-line">
           strategy=${item.strategy} status=${item.status}
         </div>
       </li>
@@ -387,7 +328,7 @@ function renderBrowserInsights(insights) {
           <strong class="mono">${item.label}</strong>
           <span class="badge">${formatMs(item.duration_ms)}</span>
         </div>
-        <div class="muted" style="margin-top: 8px;">
+        <div class="muted detail-line">
           status=${item.status} attempts=${item.attempt_count ?? "n/a"} total_runs=${item.total_run_count ?? "n/a"}
         </div>
       </li>
@@ -404,7 +345,7 @@ function renderBrowserInsights(insights) {
           <strong class="mono">${item.label}</strong>
           <span class="badge">${formatMs(item.duration_ms)}</span>
         </div>
-        <div class="muted" style="margin-top: 8px;">
+        <div class="muted detail-line">
           status=${item.status} cached=${item.cached === null ? "n/a" : String(item.cached)} attempts=${item.attempt_count ?? "n/a"}
         </div>
       </li>
@@ -426,7 +367,7 @@ function renderAnalysis(payload, browserInsights) {
           <strong>${item.category}</strong>
           <span class="badge">${item.severity}</span>
         </div>
-        <div class="muted" style="margin-top: 8px;">${item.message}</div>
+        <div class="muted detail-line">${item.message}</div>
       </li>
     `,
     "No findings.",
@@ -450,7 +391,7 @@ function renderAnalysis(payload, browserInsights) {
           <strong>${item.mnemonic}</strong>
           <span class="badge">${formatMs(item.span_ms)}</span>
         </div>
-        <div class="muted" style="margin-top: 8px;">
+        <div class="muted detail-line">
           actions=${item.actions_executed} user=${formatMs(item.user_time_ms)} system=${formatMs(item.system_time_ms)}
         </div>
       </li>
@@ -483,74 +424,167 @@ function renderAnalysis(payload, browserInsights) {
   );
 }
 
-function resetReviewPanels() {
+function resetReviewPanels(message = "No uploaded reviews yet.") {
   summaryGrid.innerHTML = "";
-  findingsList.innerHTML = '<li class="muted">No analysis yet.</li>';
-  failedTargetsList.innerHTML = '<li class="muted">No analysis yet.</li>';
-  cacheOverviewList.innerHTML = '<li class="muted">No analysis yet.</li>';
-  cacheMissReasonsList.innerHTML = '<li class="muted">No analysis yet.</li>';
-  flakyTestsList.innerHTML = '<li class="muted">No analysis yet.</li>';
-  compileTopList.innerHTML = '<li class="muted">No analysis yet.</li>';
-  ioTopList.innerHTML = '<li class="muted">No analysis yet.</li>';
-  slowTestsList.innerHTML = '<li class="muted">No analysis yet.</li>';
-  actionsList.innerHTML = '<li class="muted">No analysis yet.</li>';
-  runnerCountsList.innerHTML = '<li class="muted">No analysis yet.</li>';
-  timingBreakdownList.innerHTML = '<li class="muted">No analysis yet.</li>';
+  findingsList.innerHTML = `<li class="muted">${message}</li>`;
+  failedTargetsList.innerHTML = `<li class="muted">${message}</li>`;
+  cacheOverviewList.innerHTML = `<li class="muted">${message}</li>`;
+  cacheMissReasonsList.innerHTML = `<li class="muted">${message}</li>`;
+  flakyTestsList.innerHTML = `<li class="muted">${message}</li>`;
+  compileTopList.innerHTML = `<li class="muted">${message}</li>`;
+  ioTopList.innerHTML = `<li class="muted">${message}</li>`;
+  slowTestsList.innerHTML = `<li class="muted">${message}</li>`;
+  actionsList.innerHTML = `<li class="muted">${message}</li>`;
+  runnerCountsList.innerHTML = `<li class="muted">${message}</li>`;
+  timingBreakdownList.innerHTML = `<li class="muted">${message}</li>`;
 }
 
-async function runAnalysis() {
-  const body = source.value.trim();
-  if (!body) {
-    status.textContent = "Paste BEP NDJSON first.";
-    source.focus();
+function reviewLabel(review) {
+  return (
+    review.invocation_id ||
+    review.summary.invocation_id ||
+    review.build_id ||
+    review.project_id ||
+    review.summary.command ||
+    "unknown"
+  );
+}
+
+function reviewStatus(review) {
+  return review.summary.success === true ? "success" : review.summary.success === false ? "failed" : "n/a";
+}
+
+function renderHistory(reviews) {
+  if (!reviews || reviews.length === 0) {
+    historyList.innerHTML = '<li class="muted">No uploaded reviews yet.</li>';
     return;
   }
 
-  status.textContent = "Analyzing...";
-  analyzeBtn.disabled = true;
+  historyList.innerHTML = reviews
+    .map(
+      (review) => `
+        <li class="history-item ${review.id === currentReviewId ? "history-item-active" : ""}" data-review-id="${review.id}">
+          <div class="split-line">
+            <strong class="mono">${reviewLabel(review)}</strong>
+            <span class="badge">${reviewStatus(review)}</span>
+          </div>
+          <div class="history-meta">
+            <span>${new Date(review.uploaded_at_ms).toLocaleString()}</span>
+            <span>critical=${formatMs(review.summary.critical_path_ms)}</span>
+            <span>wall=${formatMs(review.summary.wall_time_ms ?? review.summary.elapsed_ms)}</span>
+          </div>
+        </li>
+      `,
+    )
+    .join("");
+}
+
+function renderSetupSnippets() {
+  const grpcHost = "<private-bes-host>:443";
+  const origin = window.location.origin;
+  bazelGrpcConfig.textContent = [
+    `build --bes_backend=grpcs://${grpcHost}`,
+    `test --bes_backend=grpcs://${grpcHost}`,
+    "build --bes_results_url=",
+    "test --bes_results_url=",
+  ].join("\n");
+  bazelMetricsConfig.textContent = [
+    "build --build_event_publish_all_actions",
+    "test --build_event_publish_all_actions",
+    "build --experimental_build_event_upload_strategy=fully_async",
+    "test --experimental_build_event_upload_strategy=fully_async",
+  ].join("\n");
+  sinkConfig.textContent = [
+    `BEPLESS_HTTP_SINK_URL=${origin}/ingest`,
+    "BEPLESS_HTTP_SINK_TIMEOUT_SECONDS=30",
+  ].join("\n");
+}
+
+async function loadReview(reviewId) {
+  status.textContent = `Loading review #${reviewId}...`;
+
+  const response = await fetch(`/api/reviews/${reviewId}`);
+  if (!response.ok) {
+    const message = `Failed to load review #${reviewId}.`;
+    status.textContent = message;
+    throw new Error(message);
+  }
+
+  const review = await response.json();
+  currentReviewId = review.id;
+  renderHistory(await fetchReviews(false));
+  renderAnalysis(review.analysis, summarizeBrowserInsights(review.ingest_body));
+  status.textContent = `Showing review #${review.id} from ${new Date(review.uploaded_at_ms).toLocaleString()}.`;
+}
+
+async function fetchReviews(updateStatus = true) {
+  if (updateStatus) {
+    status.textContent = "Loading uploaded reviews...";
+  }
+
+  const response = await fetch("/api/reviews");
+  if (!response.ok) {
+    const message = "Failed to load uploaded reviews.";
+    status.textContent = message;
+    throw new Error(message);
+  }
+
+  const reviews = await response.json();
+  renderHistory(reviews);
+  return reviews;
+}
+
+async function boot() {
+  renderSetupSnippets();
+  resetReviewPanels();
 
   try {
-    const browserInsights = summarizeBrowserInsights(body);
-    const response = await fetch("/analyze", {
-      method: "POST",
-      headers: { "content-type": "text/plain; charset=utf-8" },
-      body,
-    });
-
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.message || "Request failed");
+    const reviews = await fetchReviews();
+    if (reviews.length === 0) {
+      status.textContent = "Waiting for BES uploads.";
+      return;
     }
 
-    renderAnalysis(payload, browserInsights);
-    renderHistory(saveHistoryEntry(body, payload));
-    status.textContent = `Review complete. Parsed invocation ${payload.summary.invocation_id || "n/a"}.`;
+    currentReviewId = reviews[0].id;
+    renderHistory(reviews);
+    await loadReview(reviews[0].id);
   } catch (error) {
-    status.textContent = `Review failed: ${error.message}`;
-  } finally {
-    analyzeBtn.disabled = false;
+    console.error(error);
+    resetReviewPanels("Failed to load reviews.");
   }
 }
 
-analyzeBtn.addEventListener("click", runAnalysis);
-clearBtn.addEventListener("click", () => {
-  source.value = "";
-  status.textContent = "Waiting for input.";
-  resetReviewPanels();
-});
-sampleBtn.addEventListener("click", () => {
-  source.value = sampleText;
-  status.textContent = "Sample BEP inserted.";
-});
-historyList.addEventListener("click", (event) => {
-  const item = event.target.closest("[data-history-id]");
-  if (!item) return;
-  const history = readHistory();
-  const selected = history.find((entry) => entry.id === item.dataset.historyId);
-  if (!selected) return;
-  source.value = selected.input;
-  status.textContent = `Loaded review from ${new Date(selected.created_at).toLocaleString()}.`;
+refreshBtn.addEventListener("click", async () => {
+  try {
+    const reviews = await fetchReviews();
+    if (reviews.length === 0) {
+      currentReviewId = null;
+      resetReviewPanels();
+      status.textContent = "Waiting for BES uploads.";
+      return;
+    }
+
+    const target = reviews.some((review) => review.id === currentReviewId) ? currentReviewId : reviews[0].id;
+    currentReviewId = target;
+    renderHistory(reviews);
+    await loadReview(target);
+  } catch (error) {
+    console.error(error);
+  }
 });
 
-resetReviewPanels();
-renderHistory();
+historyList.addEventListener("click", async (event) => {
+  const item = event.target.closest("[data-review-id]");
+  if (!item) return;
+
+  const reviewId = Number(item.dataset.reviewId);
+  if (!Number.isFinite(reviewId)) return;
+
+  try {
+    await loadReview(reviewId);
+  } catch (error) {
+    console.error(error);
+  }
+});
+
+boot();

@@ -74,45 +74,6 @@ p {
   padding: 18px;
 }
 
-.input-panel {
-  display: grid;
-  gap: 14px;
-}
-
-.label {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: baseline;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-textarea {
-  width: 100%;
-  min-height: 420px;
-  resize: vertical;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 16px;
-  font: 13px/1.55 "IBM Plex Mono", monospace;
-  color: var(--ink);
-  background: rgba(255, 255, 255, 0.72);
-  box-sizing: border-box;
-}
-
-textarea:focus {
-  outline: 2px solid rgba(11, 110, 79, 0.16);
-  border-color: rgba(11, 110, 79, 0.4);
-}
-
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
 button {
   appearance: none;
   border: 0;
@@ -144,6 +105,14 @@ button.secondary:hover {
   min-height: 20px;
   font-size: 13px;
   color: var(--muted);
+}
+
+.status-row {
+  margin-top: 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
 }
 
 .dashboard {
@@ -191,6 +160,17 @@ button.secondary:hover {
 h2 {
   margin: 0 0 14px;
   font-size: 18px;
+}
+
+pre {
+  margin: 14px 0 0;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  font: 13px/1.6 "IBM Plex Mono", monospace;
+  overflow-x: auto;
 }
 
 ul {
@@ -252,6 +232,11 @@ li {
   font-size: 13px;
 }
 
+.section-copy,
+.detail-line {
+  margin-top: 8px;
+}
+
 .history-item {
   cursor: pointer;
   transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
@@ -261,6 +246,11 @@ li {
   transform: translateY(-1px);
   border-color: rgba(11, 110, 79, 0.28);
   background: rgba(255, 255, 255, 0.82);
+}
+
+.history-item-active {
+  border-color: rgba(11, 110, 79, 0.36);
+  background: rgba(11, 110, 79, 0.08);
 }
 
 .history-meta {
@@ -274,5 +264,19 @@ li {
 @media (max-width: 1100px) {
   .layout {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .hero-grid,
+  .grid-2,
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .status-row,
+  .split-line {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
