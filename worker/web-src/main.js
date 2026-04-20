@@ -21,6 +21,18 @@ const timingBreakdownList = document.getElementById("timing-breakdown-list");
 
 let currentReviewId = null;
 
+function currentInvocationPath() {
+  const trimmed = window.location.pathname.replace(/^\/+|\/+$/g, "");
+  return trimmed || null;
+}
+
+function syncInvocationPath(invocationId) {
+  const nextPath = invocationId ? `/${encodeURIComponent(invocationId)}` : "/";
+  if (window.location.pathname !== nextPath) {
+    window.history.replaceState(null, "", nextPath);
+  }
+}
+
 function formatMs(value) {
   if (value === null || value === undefined) return "n/a";
   if (value >= 1000) return `${(value / 1000).toFixed(2)}s`;
@@ -523,7 +535,22 @@ async function loadReview(reviewId) {
   currentReviewId = review.id;
   renderHistory(await fetchReviews(false));
   renderAnalysis(review.analysis, summarizeBrowserInsights(review.ingest_body));
+  syncInvocationPath(review.invocation_id || review.analysis.summary.invocation_id || null);
   status.textContent = `Showing review #${review.id} from ${new Date(review.uploaded_at_ms).toLocaleString()}.`;
+}
+
+async function loadReviewByInvocation(invocationId) {
+  status.textContent = `Loading invocation ${invocationId}...`;
+
+  const response = await fetch(`/api/reviews/by-invocation/${encodeURIComponent(invocationId)}`);
+  if (!response.ok) {
+    const message = `Failed to find invocation ${invocationId}.`;
+    status.textContent = message;
+    throw new Error(message);
+  }
+
+  const payload = await response.json();
+  await loadReview(payload.review_id);
 }
 
 async function fetchReviews(updateStatus = true) {
@@ -551,6 +578,12 @@ async function boot() {
     const reviews = await fetchReviews();
     if (reviews.length === 0) {
       status.textContent = "Waiting for BES uploads.";
+      return;
+    }
+
+    const invocationId = currentInvocationPath();
+    if (invocationId) {
+      await loadReviewByInvocation(decodeURIComponent(invocationId));
       return;
     }
 

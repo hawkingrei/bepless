@@ -151,6 +151,11 @@ struct StoredReviewDetail {
     ingest_body: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredReviewLookup {
+    review_id: i64,
+}
+
 #[derive(Debug, Deserialize)]
 struct StoredReviewRow {
     id: i64,
@@ -460,7 +465,11 @@ async fn fetch(mut req: Request, env: worker::Env, _ctx: Context) -> Result<Resp
         (Method::Options, _) => cors_response(),
         (Method::Get, "/") => html_response(),
         (Method::Get, "/api/reviews") => list_reviews(&env).await,
+        (Method::Get, path) if path.starts_with("/api/reviews/by-invocation/") => {
+            get_review_by_invocation(&env, path).await
+        }
         (Method::Get, path) if path.starts_with("/api/reviews/") => get_review(&env, path).await,
+        (Method::Get, path) if is_review_entry_path(path) => html_response(),
         (Method::Post, "/analyze") => analyze_request(&mut req).await,
         (Method::Post, "/ingest") => ingest_request(&mut req, &env).await,
         _ => json_error(404, "not_found", "Route not found"),
@@ -585,6 +594,36 @@ async fn get_review(env: &worker::Env, path: &str) -> Result<Response> {
     apply_cors(response)
 }
 
+async fn get_review_by_invocation(env: &worker::Env, path: &str) -> Result<Response> {
+    let invocation_id = path.trim_start_matches("/api/reviews/by-invocation/");
+    if invocation_id.is_empty() {
+        return json_error(400, "invalid_invocation_id", "Invocation id must not be empty");
+    }
+
+    let db = open_database(env)?;
+    ensure_schema(&db).await?;
+
+    let statement = db
+        .prepare(
+            "SELECT id AS review_id
+             FROM reviews
+             WHERE invocation_id = ?1
+             ORDER BY uploaded_at_ms DESC, id DESC
+             LIMIT 1",
+        )
+        .bind(&[JsValue::from_str(invocation_id)])?;
+    let row = statement.first::<StoredReviewLookup>(None).await?;
+    let Some(row) = row else {
+        return json_error(404, "review_not_found", "Review not found for invocation id");
+    };
+
+    let mut response = Response::from_json(&row)?;
+    response
+        .headers_mut()
+        .set("content-type", "application/json; charset=utf-8")?;
+    apply_cors(response)
+}
+
 async fn extract_payload(req: &mut Request) -> Result<Vec<u8>> {
     let content_type = req
         .headers()
@@ -673,6 +712,15 @@ fn normalize_ingest_ndjson(input: &str) -> std::result::Result<String, String> {
 
 fn open_database(env: &worker::Env) -> Result<D1Database> {
     env.d1("BEPLESS_DB")
+}
+
+fn is_review_entry_path(path: &str) -> bool {
+    if path == "/" || path.starts_with("/api/") {
+        return false;
+    }
+
+    let trimmed = path.trim_matches('/');
+    !trimmed.is_empty() && !trimmed.contains('/')
 }
 
 async fn ensure_schema(db: &D1Database) -> Result<()> {
