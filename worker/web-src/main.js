@@ -480,8 +480,8 @@ function renderHistory(reviews) {
 }
 
 function renderSetupSnippets() {
-  const grpcHost = "<private-bes-host>:443";
-  const origin = window.location.origin;
+  const grpcHost = "beplessproxy.hawkingrei.com";
+  const workerOrigin = "https://bepless.hawkingrei.com";
   bazelGrpcConfig.textContent = [
     `build --bes_backend=grpcs://${grpcHost}`,
     `test --bes_backend=grpcs://${grpcHost}`,
@@ -495,7 +495,7 @@ function renderSetupSnippets() {
     "test --experimental_build_event_upload_strategy=fully_async",
   ].join("\n");
   sinkConfig.textContent = [
-    `BEPLESS_HTTP_SINK_URL=${origin}/ingest`,
+    `BEPLESS_HTTP_SINK_URL=${workerOrigin}/ingest`,
     "BEPLESS_HTTP_SINK_TIMEOUT_SECONDS=30",
   ].join("\n");
 }

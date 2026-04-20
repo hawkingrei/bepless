@@ -36,6 +36,7 @@ Useful environment variables:
 - `BEPLESS_HTTP_SINK_URL`
   - Optional.
   - If unset, the NDJSON body is emitted to logs instead of being posted.
+  - Current deployment target: `https://bepless.hawkingrei.com/ingest`.
 - `BEPLESS_HTTP_SINK_TIMEOUT_SECONDS`
   - Optional.
   - Defaults to `15`.
@@ -103,6 +104,11 @@ The intended routing is:
 1. `cloudflared` accepts the public gRPC hostname.
 2. It forwards HTTP/2 traffic to `https://127.0.0.1:50051`.
 3. `bepless-grpc-ingest` handles the BES stream locally.
+
+Current hostnames:
+
+- BES gRPC hostname: `beplessproxy.hawkingrei.com`
+- Worker hostname: `bepless.hawkingrei.com`
 
 Suggested install flow:
 

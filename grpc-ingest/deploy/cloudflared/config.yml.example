@@ -2,7 +2,7 @@ tunnel: <tunnel-uuid>
 credentials-file: /etc/cloudflared/<tunnel-uuid>.json
 
 ingress:
-  - hostname: <grpc-bes-hostname>
+  - hostname: beplessproxy.hawkingrei.com
     service: https://127.0.0.1:50051
     originRequest:
       http2Origin: true
