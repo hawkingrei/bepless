@@ -1,0 +1,7 @@
+name = "bep-analyzer-worker"
+main = "build/worker/shim.mjs"
+compatibility_date = "2026-04-20"
+workers_dev = true
+
+[build]
+command = "worker-build --release"

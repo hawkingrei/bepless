@@ -1,0 +1,13 @@
+target/
+.wrangler/
+node_modules/
+dist/
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.der
+secrets/
+tmp/
