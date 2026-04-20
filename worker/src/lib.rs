@@ -1,8 +1,67 @@
 use std::collections::BTreeMap;
 
-use serde::Serialize;
-use serde_json::Value;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use prost::Message;
+use prost_types::{Duration as ProtoDuration, Timestamp as ProtoTimestamp};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
 use worker::{event, Context, FormEntry, Method, Request, Response, Result};
+
+pub mod blaze {
+    include!(concat!(env!("OUT_DIR"), "/blaze.rs"));
+
+    pub mod invocation_policy {
+        include!(concat!(env!("OUT_DIR"), "/blaze.invocation_policy.rs"));
+    }
+
+    pub mod strategy_policy {
+        include!(concat!(env!("OUT_DIR"), "/blaze.strategy_policy.rs"));
+    }
+}
+
+pub mod command_line {
+    include!(concat!(env!("OUT_DIR"), "/command_line.rs"));
+}
+
+pub mod failure_details {
+    include!(concat!(env!("OUT_DIR"), "/failure_details.rs"));
+}
+
+pub mod options {
+    include!(concat!(env!("OUT_DIR"), "/options.rs"));
+}
+
+pub mod devtools {
+    pub mod build {
+        pub mod lib {
+            pub mod packages {
+                pub mod metrics {
+                    include!(concat!(
+                        env!("OUT_DIR"),
+                        "/devtools.build.lib.packages.metrics.rs"
+                    ));
+                }
+            }
+        }
+    }
+}
+
+pub mod build_event_stream {
+    include!(concat!(env!("OUT_DIR"), "/build_event_stream.rs"));
+}
+
+#[derive(Debug, Deserialize)]
+struct IngestEnvelope {
+    #[allow(dead_code)]
+    project_id: String,
+    #[allow(dead_code)]
+    build_id: String,
+    #[allow(dead_code)]
+    invocation_id: String,
+    #[allow(dead_code)]
+    sequence_number: i64,
+    bazel_event_proto_base64: String,
+}
 
 #[derive(Debug, Clone, Serialize)]
 struct Summary {
@@ -365,6 +424,7 @@ async fn fetch(mut req: Request, _env: worker::Env, _ctx: Context) -> Result<Res
         (Method::Options, _) => cors_response(),
         (Method::Get, "/") => html_response(),
         (Method::Post, "/analyze") => analyze_request(&mut req).await,
+        (Method::Post, "/ingest") => ingest_request(&mut req).await,
         _ => json_error(404, "not_found", "Route not found"),
     }
 }
@@ -374,6 +434,20 @@ async fn analyze_request(req: &mut Request) -> Result<Response> {
     let content = String::from_utf8(payload)
         .map_err(|_| worker::Error::RustError("Request body is not valid UTF-8".into()))?;
     let result = analyze_ndjson(&content).map_err(|message| worker::Error::RustError(message))?;
+
+    let mut response = Response::from_json(&result)?;
+    response
+        .headers_mut()
+        .set("content-type", "application/json; charset=utf-8")?;
+    apply_cors(response)
+}
+
+async fn ingest_request(req: &mut Request) -> Result<Response> {
+    let payload = extract_payload(req).await?;
+    let content = String::from_utf8(payload)
+        .map_err(|_| worker::Error::RustError("Request body is not valid UTF-8".into()))?;
+    let result =
+        analyze_ingest_ndjson(&content).map_err(|message| worker::Error::RustError(message))?;
 
     let mut response = Response::from_json(&result)?;
     response
@@ -424,6 +498,322 @@ fn analyze_ndjson(input: &str) -> std::result::Result<AnalysisResponse, String> 
     }
 
     Ok(analyzer.finish())
+}
+
+fn analyze_ingest_ndjson(input: &str) -> std::result::Result<AnalysisResponse, String> {
+    let mut analyzer = AnalyzerState::default();
+    let mut parsed_lines = 0usize;
+
+    for (line_index, raw_line) in input.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let envelope: IngestEnvelope = serde_json::from_str(line)
+            .map_err(|err| format!("Invalid ingest NDJSON at line {}: {}", line_index + 1, err))?;
+        let payload = BASE64_STANDARD
+            .decode(envelope.bazel_event_proto_base64)
+            .map_err(|err| {
+                format!(
+                    "Invalid base64 BEP payload at line {}: {}",
+                    line_index + 1,
+                    err
+                )
+            })?;
+        let event = build_event_stream::BuildEvent::decode(payload.as_slice()).map_err(|err| {
+            format!(
+                "Invalid Bazel BuildEvent protobuf at line {}: {}",
+                line_index + 1,
+                err
+            )
+        })?;
+
+        if let Some(json_event) = convert_proto_event_to_json(&event) {
+            analyzer.ingest(&json_event);
+            parsed_lines += 1;
+        }
+    }
+
+    if parsed_lines == 0 {
+        return Err("No analyzable BEP events were found in the ingest body".to_string());
+    }
+
+    Ok(analyzer.finish())
+}
+
+#[allow(deprecated)]
+fn convert_proto_event_to_json(event: &build_event_stream::BuildEvent) -> Option<Value> {
+    let mut object = Map::new();
+    object.insert("id".to_string(), convert_event_id(event.id.as_ref())?);
+
+    match event.payload.as_ref()? {
+        build_event_stream::build_event::Payload::Progress(progress) => {
+            object.insert(
+                "progress".to_string(),
+                json!({
+                    "stdout": progress.stdout,
+                    "stderr": progress.stderr,
+                }),
+            );
+        }
+        build_event_stream::build_event::Payload::Aborted(aborted) => {
+            object.insert(
+                "aborted".to_string(),
+                json!({
+                    "reason": build_event_stream::aborted::AbortReason::try_from(aborted.reason)
+                        .ok()
+                        .map(|reason| reason.as_str_name())
+                        .unwrap_or("UNKNOWN"),
+                    "description": aborted.description,
+                }),
+            );
+        }
+        build_event_stream::build_event::Payload::Started(started) => {
+            object.insert(
+                "started".to_string(),
+                json!({
+                    "uuid": started.uuid,
+                    "startTimeMillis": proto_timestamp_to_millis(started.start_time.as_ref())
+                        .unwrap_or(started.start_time_millis)
+                        .to_string(),
+                    "buildToolVersion": started.build_tool_version,
+                    "command": started.command,
+                }),
+            );
+        }
+        build_event_stream::build_event::Payload::Configured(configured) => {
+            let mut configured_object = Map::new();
+            configured_object.insert("targetKind".to_string(), json!(configured.target_kind));
+            if configured.test_size != build_event_stream::TestSize::Unknown as i32 {
+                configured_object.insert(
+                    "testSize".to_string(),
+                    json!(build_event_stream::TestSize::try_from(configured.test_size)
+                        .ok()
+                        .map(|size| size.as_str_name())
+                        .unwrap_or("UNKNOWN")),
+                );
+            }
+            object.insert("configured".to_string(), Value::Object(configured_object));
+        }
+        build_event_stream::build_event::Payload::Completed(completed) => {
+            object.insert(
+                "completed".to_string(),
+                json!({
+                    "success": completed.success,
+                }),
+            );
+        }
+        build_event_stream::build_event::Payload::TestResult(test_result) => {
+            object.insert("testResult".to_string(), convert_test_result(test_result));
+        }
+        build_event_stream::build_event::Payload::TestSummary(test_summary) => {
+            object.insert(
+                "testSummary".to_string(),
+                convert_test_summary(test_summary),
+            );
+        }
+        build_event_stream::build_event::Payload::Finished(finished) => {
+            let overall_success = finished
+                .exit_code
+                .as_ref()
+                .map(|exit_code| exit_code.code == 0)
+                .unwrap_or(finished.overall_success);
+            object.insert(
+                "finished".to_string(),
+                json!({
+                    "overallSuccess": overall_success,
+                    "finishTimeMillis": proto_timestamp_to_millis(finished.finish_time.as_ref())
+                        .unwrap_or(finished.finish_time_millis)
+                        .to_string(),
+                    "exitCode": {
+                        "name": finished.exit_code.as_ref().map(|exit_code| exit_code.name.clone()).unwrap_or_default()
+                    }
+                }),
+            );
+        }
+        build_event_stream::build_event::Payload::BuildMetrics(metrics) => {
+            object.insert("buildMetrics".to_string(), convert_build_metrics(metrics));
+        }
+        _ => return None,
+    }
+
+    Some(Value::Object(object))
+}
+
+fn convert_event_id(id: Option<&build_event_stream::BuildEventId>) -> Option<Value> {
+    let id = id?.id.as_ref()?;
+    Some(match id {
+        build_event_stream::build_event_id::Id::Progress(_) => json!({ "progress": {} }),
+        build_event_stream::build_event_id::Id::Started(_) => json!({ "started": {} }),
+        build_event_stream::build_event_id::Id::BuildFinished(_) => {
+            json!({ "buildFinished": {} })
+        }
+        build_event_stream::build_event_id::Id::BuildMetrics(_) => json!({ "buildMetrics": {} }),
+        build_event_stream::build_event_id::Id::TargetConfigured(target) => json!({
+            "targetConfigured": {
+                "label": target.label,
+            }
+        }),
+        build_event_stream::build_event_id::Id::TargetCompleted(target) => json!({
+            "targetCompleted": {
+                "label": target.label,
+                "configuration": {
+                    "id": target.configuration.as_ref().map(|cfg| cfg.id.clone()).unwrap_or_default()
+                }
+            }
+        }),
+        build_event_stream::build_event_id::Id::TestSummary(test) => json!({
+            "testSummary": {
+                "label": test.label,
+                "configuration": {
+                    "id": test.configuration.as_ref().map(|cfg| cfg.id.clone()).unwrap_or_default()
+                }
+            }
+        }),
+        build_event_stream::build_event_id::Id::TestResult(test) => json!({
+            "testResult": {
+                "label": test.label,
+                "configuration": {
+                    "id": test.configuration.as_ref().map(|cfg| cfg.id.clone()).unwrap_or_default()
+                },
+                "run": test.run,
+                "shard": test.shard,
+                "attempt": test.attempt,
+            }
+        }),
+        _ => return None,
+    })
+}
+
+fn convert_test_result(test_result: &build_event_stream::TestResult) -> Value {
+    let mut object = Map::new();
+    object.insert(
+        "status".to_string(),
+        json!(build_event_stream::TestStatus::try_from(test_result.status)
+            .ok()
+            .map(|status| status.as_str_name())
+            .unwrap_or("NO_STATUS")),
+    );
+
+    if let Some(execution_info) = test_result.execution_info.as_ref() {
+        object.insert(
+            "executionInfo".to_string(),
+            convert_execution_info(execution_info),
+        );
+    }
+
+    Value::Object(object)
+}
+
+fn convert_execution_info(
+    execution_info: &build_event_stream::test_result::ExecutionInfo,
+) -> Value {
+    let mut object = Map::new();
+    object.insert("strategy".to_string(), json!(execution_info.strategy));
+    if let Some(timing_breakdown) = execution_info.timing_breakdown.as_ref() {
+        object.insert(
+            "timingBreakdown".to_string(),
+            convert_timing_breakdown(timing_breakdown),
+        );
+    }
+    Value::Object(object)
+}
+
+fn convert_timing_breakdown(
+    timing_breakdown: &build_event_stream::test_result::execution_info::TimingBreakdown,
+) -> Value {
+    json!({
+        "name": timing_breakdown.name,
+        "time": proto_duration_to_seconds_text(timing_breakdown.time.as_ref()).unwrap_or_else(|| "0s".to_string()),
+        "child": timing_breakdown
+            .child
+            .iter()
+            .map(convert_timing_breakdown)
+            .collect::<Vec<_>>(),
+    })
+}
+
+#[allow(deprecated)]
+fn convert_test_summary(test_summary: &build_event_stream::TestSummary) -> Value {
+    json!({
+        "overallStatus": build_event_stream::TestStatus::try_from(test_summary.overall_status)
+            .ok()
+            .map(|status| status.as_str_name())
+            .unwrap_or("NO_STATUS"),
+        "totalRunDurationMillis": proto_duration_to_millis(test_summary.total_run_duration.as_ref())
+            .unwrap_or(test_summary.total_run_duration_millis)
+            .to_string(),
+        "totalRunDuration": proto_duration_to_seconds_text(test_summary.total_run_duration.as_ref())
+            .unwrap_or_else(|| "0s".to_string()),
+        "totalNumCached": test_summary.total_num_cached,
+    })
+}
+
+fn convert_build_metrics(metrics: &build_event_stream::BuildMetrics) -> Value {
+    let mut object = Map::new();
+
+    if let Some(action_summary) = metrics.action_summary.as_ref() {
+        object.insert(
+            "actionSummary".to_string(),
+            convert_action_summary(action_summary),
+        );
+    }
+    if let Some(timing_metrics) = metrics.timing_metrics.as_ref() {
+        object.insert(
+            "timingMetrics".to_string(),
+            json!({
+                "wallTimeInMs": timing_metrics.wall_time_in_ms.to_string(),
+                "cpuTimeInMs": timing_metrics.cpu_time_in_ms.to_string(),
+                "analysisPhaseTimeInMs": timing_metrics.analysis_phase_time_in_ms.to_string(),
+                "executionPhaseTimeInMs": timing_metrics.execution_phase_time_in_ms.to_string(),
+            }),
+        );
+    }
+
+    Value::Object(object)
+}
+
+#[allow(deprecated)]
+fn convert_action_summary(
+    action_summary: &build_event_stream::build_metrics::ActionSummary,
+) -> Value {
+    json!({
+        "actionsExecuted": action_summary.actions_executed.to_string(),
+        "remoteCacheHits": action_summary.remote_cache_hits.to_string(),
+        "actionCacheStatistics": action_summary.action_cache_statistics.as_ref().map(|stats| json!({
+            "hits": stats.hits,
+            "misses": stats.misses,
+        })).unwrap_or_else(|| json!({})),
+        "runnerCount": action_summary.runner_count.iter().map(|runner| json!({
+            "name": runner.name,
+            "count": runner.count,
+        })).collect::<Vec<_>>(),
+        "actionData": action_summary.action_data.iter().map(|data| json!({
+            "mnemonic": data.mnemonic,
+            "actionsExecuted": data.actions_executed.to_string(),
+            "firstStartedMs": data.first_started_ms.to_string(),
+            "lastEndedMs": data.last_ended_ms.to_string(),
+            "systemTime": proto_duration_to_seconds_text(data.system_time.as_ref()).unwrap_or_else(|| "0s".to_string()),
+            "userTime": proto_duration_to_seconds_text(data.user_time.as_ref()).unwrap_or_else(|| "0s".to_string()),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn proto_duration_to_millis(duration: Option<&ProtoDuration>) -> Option<i64> {
+    let duration = duration?;
+    Some(duration.seconds.saturating_mul(1000) + i64::from(duration.nanos) / 1_000_000)
+}
+
+fn proto_duration_to_seconds_text(duration: Option<&ProtoDuration>) -> Option<String> {
+    let duration = duration?;
+    let millis = proto_duration_to_millis(Some(duration))?;
+    Some(format!("{:.3}s", millis as f64 / 1000.0))
+}
+
+fn proto_timestamp_to_millis(timestamp: Option<&ProtoTimestamp>) -> Option<i64> {
+    let timestamp = timestamp?;
+    Some(timestamp.seconds.saturating_mul(1000) + i64::from(timestamp.nanos) / 1_000_000)
 }
 
 fn build_findings(
