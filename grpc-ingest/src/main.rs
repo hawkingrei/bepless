@@ -1,5 +1,6 @@
-use std::{env, net::SocketAddr, sync::Arc};
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use prost::Message;
 use prost_types::Any;
 use serde::Serialize;
@@ -70,41 +71,113 @@ use google::devtools::build::v1::{
 #[derive(Debug, Clone, Serialize)]
 struct NormalizedBuildEvent<'a> {
     project_id: &'a str,
+    build_id: &'a str,
     invocation_id: &'a str,
     sequence_number: i64,
-    event_debug: String,
+    bazel_event_proto_base64: String,
 }
 
-#[derive(Debug, Default)]
-struct NdjsonEventSink {
-    lines_emitted: usize,
+#[derive(Debug, Clone)]
+struct HttpSinkConfig {
+    endpoint_url: Option<String>,
+    timeout: Duration,
 }
 
-impl NdjsonEventSink {
-    fn emit(
-        &mut self,
+impl Default for HttpSinkConfig {
+    fn default() -> Self {
+        Self {
+            endpoint_url: env::var("BEPLESS_HTTP_SINK_URL")
+                .ok()
+                .filter(|value| !value.is_empty()),
+            timeout: Duration::from_secs(
+                env::var("BEPLESS_HTTP_SINK_TIMEOUT_SECONDS")
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(15),
+            ),
+        }
+    }
+}
+
+impl HttpSinkConfig {
+    fn render_ndjson_line(
+        &self,
         project_id: &str,
         stream_id: &StreamId,
         sequence_number: i64,
-        event: &build_event_stream::BuildEvent,
-    ) -> Result<(), Status> {
+        payload: &[u8],
+    ) -> Result<String, Status> {
         let line = NormalizedBuildEvent {
             project_id,
+            build_id: stream_id.build_id.as_str(),
             invocation_id: stream_id.invocation_id.as_str(),
             sequence_number,
-            event_debug: format!("{event:?}"),
+            bazel_event_proto_base64: BASE64_STANDARD.encode(payload),
         };
-        let encoded = serde_json::to_string(&line)
-            .map_err(|err| Status::internal(format!("failed to encode ndjson line: {err}")))?;
-        info!(target: "bepless.grpc_ingest.ndjson", "{encoded}");
-        self.lines_emitted += 1;
+        serde_json::to_string(&line)
+            .map_err(|err| Status::internal(format!("failed to encode ndjson line: {err}")))
+    }
+
+    async fn flush(
+        &self,
+        project_id: &str,
+        stream_id: &StreamId,
+        lines: &[String],
+    ) -> Result<(), String> {
+        if lines.is_empty() {
+            return Ok(());
+        }
+
+        let body = lines.join("\n");
+        if let Some(endpoint_url) = &self.endpoint_url {
+            let client = reqwest::Client::builder()
+                .timeout(self.timeout)
+                .build()
+                .map_err(|err| format!("failed to build http sink client: {err}"))?;
+
+            let response = client
+                .post(endpoint_url)
+                .header("content-type", "application/x-ndjson")
+                .header("x-bepless-project-id", project_id)
+                .header("x-bepless-build-id", stream_id.build_id.as_str())
+                .header("x-bepless-invocation-id", stream_id.invocation_id.as_str())
+                .body(body)
+                .send()
+                .await
+                .map_err(|err| format!("failed to deliver ndjson to http sink: {err}"))?;
+
+            if !response.status().is_success() {
+                return Err(format!(
+                    "http sink returned non-success status: {}",
+                    response.status()
+                ));
+            }
+
+            info!(
+                endpoint_url,
+                line_count = lines.len(),
+                invocation_id = stream_id.invocation_id,
+                "flushed invocation to http sink"
+            );
+            return Ok(());
+        }
+
+        info!(
+            target: "bepless.grpc_ingest.ndjson",
+            project_id,
+            build_id = stream_id.build_id,
+            invocation_id = stream_id.invocation_id,
+            line_count = lines.len(),
+            body = body,
+            "http sink url not configured; emitted ndjson body to logs"
+        );
         Ok(())
     }
 }
 
 #[derive(Debug, Clone, Default)]
 struct BesIngestService {
-    sink: Arc<Mutex<NdjsonEventSink>>,
+    sink: Arc<Mutex<HttpSinkConfig>>,
 }
 
 #[async_trait]
@@ -139,10 +212,16 @@ impl PublishBuildEvent for BesIngestService {
         let sink = Arc::clone(&self.sink);
 
         tokio::spawn(async move {
+            let mut buffered_lines = Vec::new();
+            let mut stream_context: Option<(String, StreamId)> = None;
             loop {
                 match inbound.message().await {
                     Ok(Some(message)) => match handle_stream_message(&sink, message).await {
-                        Ok(response) => {
+                        Ok((response, maybe_line, project_id, stream_id)) => {
+                            stream_context = Some((project_id, stream_id.clone()));
+                            if let Some(line) = maybe_line {
+                                buffered_lines.push(line);
+                            }
                             if tx.send(Ok(response)).await.is_err() {
                                 return;
                             }
@@ -152,7 +231,22 @@ impl PublishBuildEvent for BesIngestService {
                             return;
                         }
                     },
-                    Ok(None) => return,
+                    Ok(None) => {
+                        if let Some((project_id, stream_id)) = stream_context {
+                            let sink_config = sink.lock().await.clone();
+                            if let Err(err) = sink_config
+                                .flush(&project_id, &stream_id, &buffered_lines)
+                                .await
+                            {
+                                error!(
+                                    invocation_id = stream_id.invocation_id,
+                                    build_id = stream_id.build_id,
+                                    "failed to flush invocation to http sink: {err}"
+                                );
+                            }
+                        }
+                        return;
+                    }
                     Err(err) => {
                         let _ = tx
                             .send(Err(Status::internal(format!(
@@ -170,9 +264,18 @@ impl PublishBuildEvent for BesIngestService {
 }
 
 async fn handle_stream_message(
-    sink: &Arc<Mutex<NdjsonEventSink>>,
+    sink: &Arc<Mutex<HttpSinkConfig>>,
     message: PublishBuildToolEventStreamRequest,
-) -> Result<PublishBuildToolEventStreamResponse, Status> {
+) -> Result<
+    (
+        PublishBuildToolEventStreamResponse,
+        Option<String>,
+        String,
+        StreamId,
+    ),
+    Status,
+> {
+    let project_id = message.project_id.clone();
     let ordered = message
         .ordered_build_event
         .ok_or_else(|| Status::invalid_argument("missing ordered_build_event"))?;
@@ -185,19 +288,43 @@ async fn handle_stream_message(
         return Err(Status::invalid_argument("sequence_number must be positive"));
     }
 
-    if let Some(bazel_event) = decode_bazel_event(ordered.event.as_ref())? {
-        sink.lock().await.emit(
-            message.project_id.as_str(),
-            &stream_id,
-            ordered.sequence_number,
-            &bazel_event,
-        )?;
-    }
+    let sink_config = sink.lock().await.clone();
+    let encoded_line = maybe_render_ndjson_line(
+        &sink_config,
+        project_id.as_str(),
+        &stream_id,
+        ordered.sequence_number,
+        ordered.event.as_ref(),
+    )?;
 
-    Ok(PublishBuildToolEventStreamResponse {
-        stream_id: Some(stream_id),
-        sequence_number: ordered.sequence_number,
-    })
+    Ok((
+        PublishBuildToolEventStreamResponse {
+            stream_id: Some(stream_id.clone()),
+            sequence_number: ordered.sequence_number,
+        },
+        encoded_line,
+        project_id,
+        stream_id,
+    ))
+}
+
+fn maybe_render_ndjson_line(
+    sink: &HttpSinkConfig,
+    project_id: &str,
+    stream_id: &StreamId,
+    sequence_number: i64,
+    envelope: Option<&BesEnvelope>,
+) -> Result<Option<String>, Status> {
+    let Some(envelope) = envelope else {
+        return Ok(None);
+    };
+    let Some(any) = extract_bazel_any(envelope) else {
+        return Ok(None);
+    };
+
+    decode_bazel_event(Some(envelope))?;
+    sink.render_ndjson_line(project_id, stream_id, sequence_number, any.value.as_slice())
+        .map(Some)
 }
 
 fn decode_bazel_event(
@@ -242,8 +369,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await;
 
     let service = BesIngestService::default();
+    let sink_config = service.sink.lock().await.clone();
 
     info!(
+        http_sink_configured = sink_config.endpoint_url.is_some(),
         "bepless grpc-ingest listening on {listen_addr}; configured as a thin BES ingress without embedded secrets"
     );
 

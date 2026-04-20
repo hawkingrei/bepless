@@ -32,8 +32,41 @@ For build tool streams it:
 
 - accepts ordered BES events
 - decodes Bazel BEP payloads from the `bazel_event` `Any`
-- emits normalized NDJSON lines to logs as a safe local sink
+- buffers normalized NDJSON lines for the invocation
+- flushes the invocation to a configurable HTTP endpoint when the stream ends
 - sends ACKs using the incoming stream ID and sequence number
+
+## HTTP Sink
+
+The service can hand off one completed invocation to an HTTP endpoint.
+
+Environment variables:
+
+- `BEPLESS_HTTP_SINK_URL`
+  - Optional.
+  - If unset, the NDJSON body is emitted to logs instead of being posted.
+- `BEPLESS_HTTP_SINK_TIMEOUT_SECONDS`
+  - Optional.
+  - Defaults to `15`.
+
+Request shape:
+
+- Method: `POST`
+- Content-Type: `application/x-ndjson`
+- Headers:
+  - `x-bepless-project-id`
+  - `x-bepless-build-id`
+  - `x-bepless-invocation-id`
+
+Each NDJSON line is a normalized wrapper that contains:
+
+- `project_id`
+- `build_id`
+- `invocation_id`
+- `sequence_number`
+- `bazel_event_proto_base64`
+
+The payload is base64-encoded Bazel `build_event_stream.BuildEvent` protobuf bytes.
 
 It still intentionally does not include:
 
