@@ -44,6 +44,35 @@ The worker expects a D1 binding named `BEPLESS_DB`.
 Add the binding in your Wrangler configuration or local environment before using `/ingest` or the
 review list UI. Keep the actual database IDs out of the repository.
 
+Recommended Wrangler shape:
+
+```toml
+[[d1_databases]]
+binding = "BEPLESS_DB"
+database_name = "bepless"
+database_id = "<your-d1-database-id>"
+```
+
+## D1 Migration
+
+The canonical schema now lives in:
+
+- `migrations/0001_reviews.sql`
+
+Initialize the remote database explicitly instead of relying on first-request table creation:
+
+```bash
+cd worker
+npx wrangler d1 execute bepless --remote --file migrations/0001_reviews.sql
+```
+
+Quick verification:
+
+```bash
+cd worker
+npx wrangler d1 execute bepless --remote --command "SELECT name FROM sqlite_master WHERE type='table' AND name='reviews';"
+```
+
 ## Run
 
 ```bash

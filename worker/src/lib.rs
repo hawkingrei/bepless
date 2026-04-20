@@ -151,11 +151,6 @@ struct StoredReviewDetail {
     ingest_body: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredReviewLookup {
-    review_id: i64,
-}
-
 #[derive(Debug, Deserialize)]
 struct StoredReviewRow {
     id: i64,
@@ -465,9 +460,6 @@ async fn fetch(mut req: Request, env: worker::Env, _ctx: Context) -> Result<Resp
         (Method::Options, _) => cors_response(),
         (Method::Get, "/") => html_response(),
         (Method::Get, "/api/reviews") => list_reviews(&env).await,
-        (Method::Get, path) if path.starts_with("/api/reviews/by-invocation/") => {
-            get_review_by_invocation(&env, path).await
-        }
         (Method::Get, path) if path.starts_with("/api/reviews/") => get_review(&env, path).await,
         (Method::Get, path) if is_review_entry_path(path) => html_response(),
         (Method::Post, "/analyze") => analyze_request(&mut req).await,
@@ -588,36 +580,6 @@ async fn get_review(env: &worker::Env, path: &str) -> Result<Response> {
     };
 
     let mut response = Response::from_json(&payload)?;
-    response
-        .headers_mut()
-        .set("content-type", "application/json; charset=utf-8")?;
-    apply_cors(response)
-}
-
-async fn get_review_by_invocation(env: &worker::Env, path: &str) -> Result<Response> {
-    let invocation_id = path.trim_start_matches("/api/reviews/by-invocation/");
-    if invocation_id.is_empty() {
-        return json_error(400, "invalid_invocation_id", "Invocation id must not be empty");
-    }
-
-    let db = open_database(env)?;
-    ensure_schema(&db).await?;
-
-    let statement = db
-        .prepare(
-            "SELECT id AS review_id
-             FROM reviews
-             WHERE invocation_id = ?1
-             ORDER BY uploaded_at_ms DESC, id DESC
-             LIMIT 1",
-        )
-        .bind(&[JsValue::from_str(invocation_id)])?;
-    let row = statement.first::<StoredReviewLookup>(None).await?;
-    let Some(row) = row else {
-        return json_error(404, "review_not_found", "Review not found for invocation id");
-    };
-
-    let mut response = Response::from_json(&row)?;
     response
         .headers_mut()
         .set("content-type", "application/json; charset=utf-8")?;

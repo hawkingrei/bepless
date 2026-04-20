@@ -539,20 +539,6 @@ async function loadReview(reviewId) {
   status.textContent = `Showing review #${review.id} from ${new Date(review.uploaded_at_ms).toLocaleString()}.`;
 }
 
-async function loadReviewByInvocation(invocationId) {
-  status.textContent = `Loading invocation ${invocationId}...`;
-
-  const response = await fetch(`/api/reviews/by-invocation/${encodeURIComponent(invocationId)}`);
-  if (!response.ok) {
-    const message = `Failed to find invocation ${invocationId}.`;
-    status.textContent = message;
-    throw new Error(message);
-  }
-
-  const payload = await response.json();
-  await loadReview(payload.review_id);
-}
-
 async function fetchReviews(updateStatus = true) {
   if (updateStatus) {
     status.textContent = "Loading uploaded reviews...";
@@ -583,7 +569,20 @@ async function boot() {
 
     const invocationId = currentInvocationPath();
     if (invocationId) {
-      await loadReviewByInvocation(decodeURIComponent(invocationId));
+      const matchedReview = reviews.find(
+        (review) => review.invocation_id === decodeURIComponent(invocationId),
+      );
+      if (matchedReview) {
+        currentReviewId = matchedReview.id;
+        renderHistory(reviews);
+        await loadReview(matchedReview.id);
+        return;
+      }
+
+      status.textContent = `Invocation ${decodeURIComponent(invocationId)} is not in the latest 50 reviews.`;
+      currentReviewId = reviews[0].id;
+      renderHistory(reviews);
+      await loadReview(reviews[0].id);
       return;
     }
 
