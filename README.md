@@ -39,26 +39,11 @@ Put environment-specific values into deployment systems or local environment var
 
 ## Worker Deployment
 
-The Cloudflare Worker is deployed through GitHub Actions in `.github/workflows/deploy-worker.yml`.
+The Cloudflare Worker is intended to be built and deployed locally.
 
-Required GitHub environment secrets:
+Typical local flow:
 
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
-
-Create both GitHub Environments and set the same secret names in each one:
-
-- `dev`
-- `production`
-
-Deployment policy:
-
-1. Pull requests targeting `main` deploy the Worker to the Cloudflare `dev` environment.
-2. Pushes to `main` deploy the Worker to the Cloudflare `production` environment automatically.
-3. `workflow_dispatch` can deploy either environment manually.
-
-The workflow installs Node.js, Rust, and the `wasm32-unknown-unknown` target, then runs:
-
-1. `npm install`
-2. `cargo check`
-3. `npx wrangler deploy --env <target>`
+1. `cd worker`
+2. `npm install`
+3. `cargo check`
+4. `npm run deploy`

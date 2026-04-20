@@ -55,21 +55,15 @@ npm run deploy
 not need a preinstalled `worker-build` binary. The deployment environment still needs a working Rust
 toolchain because `worker-build` compiles the Rust worker to WebAssembly.
 
-## GitHub Actions Deployment
+If you want to deploy to a specific Wrangler environment locally:
 
-This repository includes `.github/workflows/deploy-worker.yml` for CI-based deployment.
+```bash
+cd worker
+npm install
+npx wrangler deploy --env dev
+```
 
-Required GitHub environment secrets:
-
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
-
-Create both GitHub Environments and define the same secret names in each one:
-
-- `dev`
-- `production`
-
-Cloudflare Worker environments used by `wrangler.toml`:
+`wrangler.toml` defines these local deployment targets:
 
 - `dev` -> `bep-analyzer-worker-dev`
 - `production` -> `bep-analyzer-worker`
