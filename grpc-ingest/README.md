@@ -23,4 +23,21 @@ Keep all hostnames, tunnel routes, and secrets outside the repository.
 
 ## Current State
 
-This is a safe skeleton so the repository can be initialized without leaking infrastructure details.
+The service now exposes a minimal BES-compatible gRPC surface:
+
+- `PublishLifecycleEvent`
+- `PublishBuildToolEventStream`
+
+For build tool streams it:
+
+- accepts ordered BES events
+- decodes Bazel BEP payloads from the `bazel_event` `Any`
+- emits normalized NDJSON lines to logs as a safe local sink
+- sends ACKs using the incoming stream ID and sequence number
+
+It still intentionally does not include:
+
+- tunnel configuration
+- object storage credentials
+- private hostnames
+- production routing details
