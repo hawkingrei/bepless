@@ -2,10 +2,12 @@
   "name": "bepless-worker",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "build:web": "node ./scripts/build-web.mjs",
+    "dev": "npm run build:web && wrangler dev",
+    "deploy": "npm run build:web && wrangler deploy"
   },
   "devDependencies": {
+    "esbuild": "^0.25.11",
     "wrangler": "^4"
   }
 }

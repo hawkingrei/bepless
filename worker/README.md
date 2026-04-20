@@ -39,6 +39,7 @@ shape, and returns the same summary/findings response schema as `/analyze`.
 ```bash
 cd worker
 npm install
+npm run build:web
 cargo check
 npm run dev
 ```
@@ -50,6 +51,7 @@ This directory is pinned to the stable Rust toolchain through `rust-toolchain.to
 ```bash
 cd worker
 npm install
+npm run build:web
 npm run deploy
 ```
 
@@ -69,3 +71,14 @@ npx wrangler deploy --env dev
 
 - `dev` -> `bep-analyzer-worker-dev`
 - `production` -> `bep-analyzer-worker`
+
+## Frontend Build
+
+Frontend source lives in `web-src/`.
+
+- `web-src/index.html`
+- `web-src/styles.css`
+- `web-src/main.js`
+
+`npm run build:web` bundles the frontend and writes a single embedded page to `web-dist/index.html`.
+The Rust worker includes that generated file at compile time.

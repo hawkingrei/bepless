@@ -1,0 +1,914 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bazel BEP Review</title>
+    <style>
+      :root {
+  color-scheme: light;
+  --bg: #f3efe6;
+  --panel: rgba(255, 252, 245, 0.88);
+  --ink: #1b1c1d;
+  --muted: #5e625d;
+  --accent: #0b6e4f;
+  --accent-strong: #084c39;
+  --accent-soft: rgba(11, 110, 79, 0.1);
+  --warn: #92400e;
+  --warn-soft: rgba(146, 64, 14, 0.12);
+  --danger: #991b1b;
+  --danger-soft: rgba(153, 27, 27, 0.1);
+  --border: rgba(105, 95, 78, 0.22);
+  --shadow: 0 20px 60px rgba(57, 49, 35, 0.12);
+}
+
+body {
+  margin: 0;
+  font-family: "Iosevka Aile", "IBM Plex Sans", sans-serif;
+  background:
+    radial-gradient(circle at top right, rgba(11, 110, 79, 0.15), transparent 24%),
+    radial-gradient(circle at left 20%, rgba(217, 119, 6, 0.08), transparent 22%),
+    linear-gradient(180deg, #f8f4eb 0%, #ece3d2 100%);
+  color: var(--ink);
+}
+
+main {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 28px 20px 72px;
+}
+
+.shell {
+  display: grid;
+  gap: 18px;
+}
+
+.hero {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  padding: 28px 30px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+}
+
+h1 {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: clamp(32px, 5vw, 54px);
+  line-height: 1.05;
+  margin: 0 0 12px;
+}
+
+p {
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  gap: 18px;
+  align-items: start;
+  margin-top: 24px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 18px;
+}
+
+.input-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.label {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: baseline;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+textarea {
+  width: 100%;
+  min-height: 420px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  font: 13px/1.55 "IBM Plex Mono", monospace;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.72);
+  box-sizing: border-box;
+}
+
+textarea:focus {
+  outline: 2px solid rgba(11, 110, 79, 0.16);
+  border-color: rgba(11, 110, 79, 0.4);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+button {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: white;
+  padding: 12px 18px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+button:hover {
+  background: var(--accent-strong);
+  transform: translateY(-1px);
+}
+
+button.secondary {
+  background: rgba(27, 28, 29, 0.08);
+  color: var(--ink);
+}
+
+button.secondary:hover {
+  background: rgba(27, 28, 29, 0.14);
+}
+
+.status {
+  min-height: 20px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.dashboard {
+  display: grid;
+  gap: 18px;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.kpi {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.kpi-label {
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.kpi-value {
+  font-size: 28px;
+  font-weight: 700;
+  margin-top: 8px;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+}
+
+h2 {
+  margin: 0 0 14px;
+  font-size: 18px;
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+li {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.finding-high {
+  background: var(--danger-soft);
+  border-color: rgba(153, 27, 27, 0.22);
+}
+
+.finding-medium {
+  background: var(--warn-soft);
+  border-color: rgba(146, 64, 14, 0.22);
+}
+
+.finding-low {
+  background: var(--accent-soft);
+}
+
+.mono {
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.split-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: baseline;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: "IBM Plex Mono", monospace;
+  background: rgba(27, 28, 29, 0.08);
+}
+
+.hint {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+}
+
+.history-item {
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.history-item:hover {
+  transform: translateY(-1px);
+  border-color: rgba(11, 110, 79, 0.28);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.history-meta {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  display: grid;
+  gap: 4px;
+}
+
+@media (max-width: 1100px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="shell">
+        <div class="layout">
+          <div class="shell">
+            <section class="hero">
+              <h1>Bazel BEP Review</h1>
+              <p>
+                Paste BEP NDJSON or an HTTP ingest body and review the bottlenecks directly:
+                critical path, action cache efficiency, slow tests, action spans, timing breakdowns,
+                and a small set of performance findings.
+              </p>
+              <div class="hero-grid">
+                <section class="panel input-panel">
+                  <div class="label">
+                    <span>Input</span>
+                    <span>Paste BEP NDJSON from BES, logs, or HTTP handoff</span>
+                  </div>
+                  <textarea id="source" spellcheck="false" placeholder="Paste BEP NDJSON or ingest NDJSON here"></textarea>
+                  <div class="toolbar">
+                    <button id="analyze-btn" type="button">Run Review</button>
+                    <button id="clear-btn" class="secondary" type="button">Clear</button>
+                    <button id="sample-btn" class="secondary" type="button">Insert Sample</button>
+                  </div>
+                  <div class="status" id="status">Waiting for input.</div>
+                </section>
+
+                <section class="dashboard">
+                  <section class="panel">
+                    <h2>Summary</h2>
+                    <div class="kpi-grid" id="summary-grid"></div>
+                  </section>
+
+                  <section class="grid-2">
+                    <section class="panel">
+                      <h2>Findings</h2>
+                      <ul id="findings-list">
+                        <li class="muted">No analysis yet.</li>
+                      </ul>
+                    </section>
+                    <section class="panel">
+                      <h2>Failed Targets</h2>
+                      <ul id="failed-targets-list">
+                        <li class="muted">No analysis yet.</li>
+                      </ul>
+                    </section>
+                  </section>
+                </section>
+              </div>
+            </section>
+
+            <section class="grid-2">
+              <section class="panel">
+                <h2>Cache Overview</h2>
+                <ul id="cache-overview-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+              <section class="panel">
+                <h2>Flaky Tests</h2>
+                <ul id="flaky-tests-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+            </section>
+
+            <section class="grid-2">
+              <section class="panel">
+                <h2>Top Compile Time</h2>
+                <ul id="compile-top-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+              <section class="panel">
+                <h2>Top IO Time</h2>
+                <ul id="io-top-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+            </section>
+
+            <section class="grid-2">
+              <section class="panel">
+                <h2>Top Test Time</h2>
+                <ul id="slow-tests-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+              <section class="panel">
+                <h2>Cache Miss Reasons</h2>
+                <ul id="cache-miss-reasons-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+            </section>
+
+            <section class="grid-2">
+              <section class="panel">
+                <h2>Top Action Mnemonics</h2>
+                <ul id="actions-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+              <section class="panel">
+                <h2>Runner Counts</h2>
+                <ul id="runner-counts-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+            </section>
+
+            <section class="grid-2">
+              <section class="panel">
+                <h2>Timing Breakdown</h2>
+                <ul id="timing-breakdown-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+            </section>
+          </div>
+
+          <aside class="panel">
+            <h2>Recent Reviews</h2>
+            <p class="hint">Only the latest 50 reviews are retained locally in this browser.</p>
+            <ul id="history-list">
+              <li class="muted">No review history yet.</li>
+            </ul>
+          </aside>
+        </div>
+      </div>
+    </main>
+    <script>
+      (() => {
+  // web-src/main.js
+  var source = document.getElementById("source");
+  var status = document.getElementById("status");
+  var analyzeBtn = document.getElementById("analyze-btn");
+  var clearBtn = document.getElementById("clear-btn");
+  var sampleBtn = document.getElementById("sample-btn");
+  var summaryGrid = document.getElementById("summary-grid");
+  var findingsList = document.getElementById("findings-list");
+  var failedTargetsList = document.getElementById("failed-targets-list");
+  var cacheOverviewList = document.getElementById("cache-overview-list");
+  var cacheMissReasonsList = document.getElementById("cache-miss-reasons-list");
+  var flakyTestsList = document.getElementById("flaky-tests-list");
+  var compileTopList = document.getElementById("compile-top-list");
+  var ioTopList = document.getElementById("io-top-list");
+  var slowTestsList = document.getElementById("slow-tests-list");
+  var actionsList = document.getElementById("actions-list");
+  var runnerCountsList = document.getElementById("runner-counts-list");
+  var timingBreakdownList = document.getElementById("timing-breakdown-list");
+  var historyList = document.getElementById("history-list");
+  var HISTORY_KEY = "bep-review-history-v1";
+  var HISTORY_LIMIT = 50;
+  var sampleText = [
+    '{"id":{"started":{}},"started":{"uuid":"demo-invocation","startTimeMillis":"1714695817843","buildToolVersion":"7.1.0","command":"test"}}',
+    '{"id":{"testSummary":{"label":"//demo:test","configuration":{"id":"fastbuild"}}},"testSummary":{"overallStatus":"PASSED","totalRunDurationMillis":"1134","totalNumCached":0}}',
+    '{"id":{"progress":{"opaqueCount":1}},"progress":{"stderr":"INFO: Elapsed time: 2.598s, Critical Path: 2.22s\\n"}}',
+    '{"id":{"buildMetrics":{}},"buildMetrics":{"actionSummary":{"actionsExecuted":"4","remoteCacheHits":"10","actionCacheStatistics":{"hits":10,"misses":5},"runnerCount":[{"name":"total","count":4},{"name":"darwin-sandbox","count":2}],"actionData":[{"mnemonic":"TestRunner","actionsExecuted":"1","firstStartedMs":"1714695819112","lastEndedMs":"1714695820440","systemTime":"0.356s","userTime":"0.830s"}]},"timingMetrics":{"cpuTimeInMs":"3495","wallTimeInMs":"2565","analysisPhaseTimeInMs":"56","executionPhaseTimeInMs":"2268"}}',
+    '{"id":{"buildFinished":{}},"finished":{"overallSuccess":true,"finishTimeMillis":"1714695820441","exitCode":{"name":"SUCCESS"}}}'
+  ].join("\n");
+  function formatMs(value) {
+    if (value === null || value === void 0) return "n/a";
+    if (value >= 1e3) return `${(value / 1e3).toFixed(2)}s`;
+    return `${value}ms`;
+  }
+  function formatPercent(value) {
+    if (value === null || value === void 0) return "n/a";
+    return `${(value * 100).toFixed(1)}%`;
+  }
+  function toNumber(value) {
+    if (value === null || value === void 0 || value === "") return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  function parseDurationMs(value) {
+    if (value === null || value === void 0) return null;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+    const match = trimmed.match(/^(-?\d+(?:\.\d+)?)(ms|s|m)$/);
+    if (!match) return null;
+    const amount = Number(match[1]);
+    const unit = match[2];
+    if (unit === "ms") return amount;
+    if (unit === "s") return amount * 1e3;
+    if (unit === "m") return amount * 6e4;
+    return null;
+  }
+  function isCompileMnemonic(name) {
+    const lower = String(name || "").toLowerCase();
+    return [
+      "compile",
+      "link",
+      "javac",
+      "kotlinc",
+      "scalac",
+      "swift",
+      "rustc",
+      "tsproject",
+      "tsc",
+      "protoc",
+      "modulemap"
+    ].some((keyword) => lower.includes(keyword)) || /^(go|cc|cpp|objc)/.test(lower);
+  }
+  function isIOTimingName(name) {
+    return [
+      "parsetime",
+      "fetchtime",
+      "queuetime",
+      "uploadtime",
+      "setuptime",
+      "processoutputstime",
+      "networktime",
+      "downloadtime",
+      "cachechecktime",
+      "filesystemtime",
+      "iotime"
+    ].includes(String(name || "").toLowerCase());
+  }
+  function sumIOTimingMs(node) {
+    if (!node || typeof node !== "object") return 0;
+    let total = 0;
+    if (isIOTimingName(node.name)) {
+      total += parseDurationMs(node.time) || 0;
+    }
+    if (Array.isArray(node.child)) {
+      for (const child of node.child) {
+        total += sumIOTimingMs(child);
+      }
+    }
+    return total;
+  }
+  function isFlakyTest(test) {
+    if (!test) return false;
+    if (test.status === "FLAKY") return true;
+    const attemptCount = toNumber(test.attempt_count);
+    const totalRunCount = toNumber(test.total_run_count);
+    return attemptCount !== null && attemptCount > 1 || totalRunCount !== null && totalRunCount > 1;
+  }
+  function summarizeBrowserInsights(input) {
+    const compileItems = [];
+    const ioItems = [];
+    const tests = [];
+    const flakyTests = [];
+    const cacheMissReasons = /* @__PURE__ */ new Map();
+    let cacheOverview = null;
+    for (const rawLine of input.split("\n")) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const event = JSON.parse(line);
+      const buildMetrics = event.buildMetrics;
+      if (buildMetrics && buildMetrics.actionSummary) {
+        const actionSummary = buildMetrics.actionSummary;
+        const actionCacheStatistics = actionSummary.actionCacheStatistics || {};
+        cacheOverview = {
+          remote_hits: toNumber(actionSummary.remoteCacheHits),
+          action_hits: toNumber(actionCacheStatistics.hits),
+          action_misses: toNumber(actionCacheStatistics.misses)
+        };
+        for (const detail of actionCacheStatistics.missDetails || []) {
+          const reason = detail.reason || "UNKNOWN";
+          const count = toNumber(detail.count) || 0;
+          cacheMissReasons.set(reason, (cacheMissReasons.get(reason) || 0) + count);
+        }
+        for (const entry of actionSummary.actionData || []) {
+          const mnemonic = entry.mnemonic || "unknown";
+          if (!isCompileMnemonic(mnemonic)) continue;
+          const firstStartedMs = toNumber(entry.firstStartedMs) || 0;
+          const lastEndedMs = toNumber(entry.lastEndedMs) || 0;
+          compileItems.push({
+            name: mnemonic,
+            actions_executed: toNumber(entry.actionsExecuted) || 0,
+            duration_ms: Math.max(0, lastEndedMs - firstStartedMs),
+            user_time_ms: parseDurationMs(entry.userTime),
+            system_time_ms: parseDurationMs(entry.systemTime)
+          });
+        }
+      }
+      if (event.id && event.id.testSummary && event.testSummary) {
+        const summary = event.testSummary;
+        const test = {
+          label: event.id.testSummary.label || "<unknown>",
+          status: summary.overallStatus || "UNKNOWN",
+          duration_ms: toNumber(summary.totalRunDurationMillis) ?? toNumber(summary.totalRunDurationInMs) ?? parseDurationMs(summary.totalRunDuration) ?? 0,
+          cached: summary.totalNumCached === null || summary.totalNumCached === void 0 ? null : Number(summary.totalNumCached) > 0,
+          attempt_count: toNumber(summary.attemptCount),
+          run_count: toNumber(summary.runCount),
+          total_run_count: toNumber(summary.totalRunCount)
+        };
+        tests.push(test);
+        if (isFlakyTest(test)) {
+          flakyTests.push(test);
+        }
+      }
+      if (event.id && event.id.testResult && event.testResult && event.testResult.executionInfo) {
+        const testResult = event.testResult;
+        const ioMs = sumIOTimingMs(testResult.executionInfo.timingBreakdown);
+        ioItems.push({
+          name: event.id.testResult.label || "<unknown>",
+          duration_ms: ioMs,
+          strategy: testResult.executionInfo.strategy || "n/a",
+          status: testResult.status || "UNKNOWN"
+        });
+      }
+    }
+    compileItems.sort((left, right) => right.duration_ms - left.duration_ms);
+    ioItems.sort((left, right) => right.duration_ms - left.duration_ms);
+    tests.sort((left, right) => right.duration_ms - left.duration_ms);
+    flakyTests.sort((left, right) => right.duration_ms - left.duration_ms);
+    return {
+      cacheOverview,
+      cacheMissReasons: Array.from(cacheMissReasons.entries()).sort((left, right) => right[1] - left[1]),
+      topCompileItems: compileItems.slice(0, 10),
+      topIoItems: ioItems.filter((item) => item.duration_ms > 0).slice(0, 10),
+      topTests: tests.slice(0, 10),
+      flakyTests: flakyTests.slice(0, 10)
+    };
+  }
+  function createListItems(container, items, render, emptyText) {
+    if (!items || items.length === 0) {
+      container.innerHTML = `<li class="muted">${emptyText}</li>`;
+      return;
+    }
+    container.innerHTML = items.map(render).join("");
+  }
+  function readHistory() {
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  function writeHistory(history) {
+    const next = history.slice(0, HISTORY_LIMIT);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+    return next;
+  }
+  function saveHistoryEntry(input, payload) {
+    const history = readHistory().filter((entry) => entry.input !== input);
+    history.unshift({
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      created_at: (/* @__PURE__ */ new Date()).toISOString(),
+      input,
+      summary: payload.summary
+    });
+    return writeHistory(history);
+  }
+  function renderHistory() {
+    const history = writeHistory(readHistory());
+    if (history.length === 0) {
+      historyList.innerHTML = '<li class="muted">No review history yet.</li>';
+      return;
+    }
+    historyList.innerHTML = history.map(
+      (entry) => `
+        <li class="history-item" data-history-id="${entry.id}">
+          <div class="split-line">
+            <strong class="mono">${entry.summary.invocation_id || entry.summary.command || "unknown"}</strong>
+            <span class="badge">${entry.summary.success === true ? "success" : entry.summary.success === false ? "failed" : "n/a"}</span>
+          </div>
+          <div class="history-meta">
+            <span>${new Date(entry.created_at).toLocaleString()}</span>
+            <span>critical=${formatMs(entry.summary.critical_path_ms)}</span>
+            <span>wall=${formatMs(entry.summary.wall_time_ms ?? entry.summary.elapsed_ms)}</span>
+          </div>
+        </li>
+      `
+    ).join("");
+  }
+  function renderSummary(summary) {
+    const cards = [
+      ["Invocation", summary.invocation_id || "n/a"],
+      ["Command", summary.command || "n/a"],
+      ["Wall Time", formatMs(summary.wall_time_ms ?? summary.elapsed_ms)],
+      ["Critical Path", formatMs(summary.critical_path_ms)],
+      ["Cache Hit Ratio", formatPercent(summary.cache_hit_ratio)],
+      ["Actions", summary.total_actions ?? "n/a"],
+      ["Failed Tests", summary.failed_tests],
+      ["Exit Code", summary.exit_code || "n/a"]
+    ];
+    summaryGrid.innerHTML = cards.map(
+      ([label, value]) => `
+        <article class="kpi">
+          <div class="kpi-label">${label}</div>
+          <div class="kpi-value">${value}</div>
+        </article>
+      `
+    ).join("");
+  }
+  function renderBrowserInsights(insights) {
+    createListItems(
+      cacheOverviewList,
+      insights.cacheOverview ? [insights.cacheOverview] : [],
+      (item) => {
+        const hits = item.action_hits;
+        const misses = item.action_misses;
+        const ratio = hits !== null && misses !== null && hits + misses > 0 ? hits / (hits + misses) : null;
+        return `
+        <li>
+          <div class="split-line">
+            <strong>Action Cache</strong>
+            <span class="badge">${formatPercent(ratio)}</span>
+          </div>
+          <div class="muted" style="margin-top: 8px;">
+            hits=${hits ?? "n/a"} misses=${misses ?? "n/a"} remote_hits=${item.remote_hits ?? "n/a"}
+          </div>
+        </li>
+      `;
+      },
+      "No cache metrics in this BEP."
+    );
+    createListItems(
+      cacheMissReasonsList,
+      insights.cacheMissReasons,
+      ([reason, count]) => `
+      <li class="split-line">
+        <span>${reason}</span>
+        <span class="badge">${count}</span>
+      </li>
+    `,
+      "No cache miss reason breakdown."
+    );
+    createListItems(
+      compileTopList,
+      insights.topCompileItems,
+      (item) => `
+      <li>
+        <div class="split-line">
+          <strong>${item.name}</strong>
+          <span class="badge">${formatMs(item.duration_ms)}</span>
+        </div>
+        <div class="muted" style="margin-top: 8px;">
+          actions=${item.actions_executed} user=${formatMs(item.user_time_ms)} system=${formatMs(item.system_time_ms)}
+        </div>
+      </li>
+    `,
+      "No compile-classified actions."
+    );
+    createListItems(
+      ioTopList,
+      insights.topIoItems,
+      (item) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${item.name}</strong>
+          <span class="badge">${formatMs(item.duration_ms)}</span>
+        </div>
+        <div class="muted" style="margin-top: 8px;">
+          strategy=${item.strategy} status=${item.status}
+        </div>
+      </li>
+    `,
+      "No IO timing breakdown found."
+    );
+    createListItems(
+      flakyTestsList,
+      insights.flakyTests,
+      (item) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${item.label}</strong>
+          <span class="badge">${formatMs(item.duration_ms)}</span>
+        </div>
+        <div class="muted" style="margin-top: 8px;">
+          status=${item.status} attempts=${item.attempt_count ?? "n/a"} total_runs=${item.total_run_count ?? "n/a"}
+        </div>
+      </li>
+    `,
+      "No flaky test signal found."
+    );
+    createListItems(
+      slowTestsList,
+      insights.topTests,
+      (item) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${item.label}</strong>
+          <span class="badge">${formatMs(item.duration_ms)}</span>
+        </div>
+        <div class="muted" style="margin-top: 8px;">
+          status=${item.status} cached=${item.cached === null ? "n/a" : String(item.cached)} attempts=${item.attempt_count ?? "n/a"}
+        </div>
+      </li>
+    `,
+      "No test summaries."
+    );
+  }
+  function renderAnalysis(payload, browserInsights) {
+    renderSummary(payload.summary);
+    renderBrowserInsights(browserInsights);
+    createListItems(
+      findingsList,
+      payload.findings,
+      (item) => `
+      <li class="finding-${item.severity}">
+        <div class="split-line">
+          <strong>${item.category}</strong>
+          <span class="badge">${item.severity}</span>
+        </div>
+        <div class="muted" style="margin-top: 8px;">${item.message}</div>
+      </li>
+    `,
+      "No findings."
+    );
+    createListItems(
+      failedTargetsList,
+      payload.failed_targets,
+      (item) => `
+      <li><span class="mono">${item}</span></li>
+    `,
+      "No failed targets."
+    );
+    createListItems(
+      actionsList,
+      payload.top_action_mnemonics,
+      (item) => `
+      <li>
+        <div class="split-line">
+          <strong>${item.mnemonic}</strong>
+          <span class="badge">${formatMs(item.span_ms)}</span>
+        </div>
+        <div class="muted" style="margin-top: 8px;">
+          actions=${item.actions_executed} user=${formatMs(item.user_time_ms)} system=${formatMs(item.system_time_ms)}
+        </div>
+      </li>
+    `,
+      "No action metrics."
+    );
+    createListItems(
+      runnerCountsList,
+      Object.entries(payload.runner_counts || {}).sort((a, b) => b[1] - a[1]),
+      ([name, count]) => `
+      <li class="split-line">
+        <span>${name}</span>
+        <span class="badge">${count}</span>
+      </li>
+    `,
+      "No runner counts."
+    );
+    createListItems(
+      timingBreakdownList,
+      Object.entries(payload.timing_breakdown_ms || {}).sort((a, b) => b[1] - a[1]),
+      ([name, value]) => `
+      <li class="split-line">
+        <span>${name}</span>
+        <span class="badge">${formatMs(value)}</span>
+      </li>
+    `,
+      "No timing breakdown."
+    );
+  }
+  function resetReviewPanels() {
+    summaryGrid.innerHTML = "";
+    findingsList.innerHTML = '<li class="muted">No analysis yet.</li>';
+    failedTargetsList.innerHTML = '<li class="muted">No analysis yet.</li>';
+    cacheOverviewList.innerHTML = '<li class="muted">No analysis yet.</li>';
+    cacheMissReasonsList.innerHTML = '<li class="muted">No analysis yet.</li>';
+    flakyTestsList.innerHTML = '<li class="muted">No analysis yet.</li>';
+    compileTopList.innerHTML = '<li class="muted">No analysis yet.</li>';
+    ioTopList.innerHTML = '<li class="muted">No analysis yet.</li>';
+    slowTestsList.innerHTML = '<li class="muted">No analysis yet.</li>';
+    actionsList.innerHTML = '<li class="muted">No analysis yet.</li>';
+    runnerCountsList.innerHTML = '<li class="muted">No analysis yet.</li>';
+    timingBreakdownList.innerHTML = '<li class="muted">No analysis yet.</li>';
+  }
+  async function runAnalysis() {
+    const body = source.value.trim();
+    if (!body) {
+      status.textContent = "Paste BEP NDJSON first.";
+      source.focus();
+      return;
+    }
+    status.textContent = "Analyzing...";
+    analyzeBtn.disabled = true;
+    try {
+      const browserInsights = summarizeBrowserInsights(body);
+      const response = await fetch("/analyze", {
+        method: "POST",
+        headers: { "content-type": "text/plain; charset=utf-8" },
+        body
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.message || "Request failed");
+      }
+      renderAnalysis(payload, browserInsights);
+      renderHistory(saveHistoryEntry(body, payload));
+      status.textContent = `Review complete. Parsed invocation ${payload.summary.invocation_id || "n/a"}.`;
+    } catch (error) {
+      status.textContent = `Review failed: ${error.message}`;
+    } finally {
+      analyzeBtn.disabled = false;
+    }
+  }
+  analyzeBtn.addEventListener("click", runAnalysis);
+  clearBtn.addEventListener("click", () => {
+    source.value = "";
+    status.textContent = "Waiting for input.";
+    resetReviewPanels();
+  });
+  sampleBtn.addEventListener("click", () => {
+    source.value = sampleText;
+    status.textContent = "Sample BEP inserted.";
+  });
+  historyList.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-history-id]");
+    if (!item) return;
+    const history = readHistory();
+    const selected = history.find((entry) => entry.id === item.dataset.historyId);
+    if (!selected) return;
+    source.value = selected.input;
+    status.textContent = `Loaded review from ${new Date(selected.created_at).toLocaleString()}.`;
+  });
+  resetReviewPanels();
+  renderHistory();
+})();
+
+    </script>
+  </body>
+</html>

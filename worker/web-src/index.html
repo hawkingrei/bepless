@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bazel BEP Review</title>
+    <style>
+      /* __BEPLESS_CSS__ */
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="shell">
+        <div class="layout">
+          <div class="shell">
+            <section class="hero">
+              <h1>Bazel BEP Review</h1>
+              <p>
+                Paste BEP NDJSON or an HTTP ingest body and review the bottlenecks directly:
+                critical path, action cache efficiency, slow tests, action spans, timing breakdowns,
+                and a small set of performance findings.
+              </p>
+              <div class="hero-grid">
+                <section class="panel input-panel">
+                  <div class="label">
+                    <span>Input</span>
+                    <span>Paste BEP NDJSON from BES, logs, or HTTP handoff</span>
+                  </div>
+                  <textarea id="source" spellcheck="false" placeholder="Paste BEP NDJSON or ingest NDJSON here"></textarea>
+                  <div class="toolbar">
+                    <button id="analyze-btn" type="button">Run Review</button>
+                    <button id="clear-btn" class="secondary" type="button">Clear</button>
+                    <button id="sample-btn" class="secondary" type="button">Insert Sample</button>
+                  </div>
+                  <div class="status" id="status">Waiting for input.</div>
+                </section>
+
+                <section class="dashboard">
+                  <section class="panel">
+                    <h2>Summary</h2>
+                    <div class="kpi-grid" id="summary-grid"></div>
+                  </section>
+
+                  <section class="grid-2">
+                    <section class="panel">
+                      <h2>Findings</h2>
+                      <ul id="findings-list">
+                        <li class="muted">No analysis yet.</li>
+                      </ul>
+                    </section>
+                    <section class="panel">
+                      <h2>Failed Targets</h2>
+                      <ul id="failed-targets-list">
+                        <li class="muted">No analysis yet.</li>
+                      </ul>
+                    </section>
+                  </section>
+                </section>
+              </div>
+            </section>
+
+            <section class="grid-2">
+              <section class="panel">
+                <h2>Cache Overview</h2>
+                <ul id="cache-overview-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+              <section class="panel">
+                <h2>Flaky Tests</h2>
+                <ul id="flaky-tests-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+            </section>
+
+            <section class="grid-2">
+              <section class="panel">
+                <h2>Top Compile Time</h2>
+                <ul id="compile-top-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+              <section class="panel">
+                <h2>Top IO Time</h2>
+                <ul id="io-top-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+            </section>
+
+            <section class="grid-2">
+              <section class="panel">
+                <h2>Top Test Time</h2>
+                <ul id="slow-tests-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+              <section class="panel">
+                <h2>Cache Miss Reasons</h2>
+                <ul id="cache-miss-reasons-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+            </section>
+
+            <section class="grid-2">
+              <section class="panel">
+                <h2>Top Action Mnemonics</h2>
+                <ul id="actions-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+              <section class="panel">
+                <h2>Runner Counts</h2>
+                <ul id="runner-counts-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+            </section>
+
+            <section class="grid-2">
+              <section class="panel">
+                <h2>Timing Breakdown</h2>
+                <ul id="timing-breakdown-list">
+                  <li class="muted">No analysis yet.</li>
+                </ul>
+              </section>
+            </section>
+          </div>
+
+          <aside class="panel">
+            <h2>Recent Reviews</h2>
+            <p class="hint">Only the latest 50 reviews are retained locally in this browser.</p>
+            <ul id="history-list">
+              <li class="muted">No review history yet.</li>
+            </ul>
+          </aside>
+        </div>
+      </div>
+    </main>
+    <script>
+      /* __BEPLESS_JS__ */
+    </script>
+  </body>
+</html>
