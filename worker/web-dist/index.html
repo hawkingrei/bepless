@@ -35,19 +35,24 @@ body {
 main {
   max-width: 1320px;
   margin: 0 auto;
-  padding: 28px 20px 72px;
+  padding: 32px 20px 80px;
 }
 
 .shell {
   display: grid;
-  gap: 18px;
+  gap: 22px;
+}
+
+.content-column {
+  display: grid;
+  gap: 22px;
 }
 
 .hero {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 28px;
-  padding: 28px 30px;
+  padding: 30px;
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
 }
@@ -59,6 +64,11 @@ h1 {
   margin: 0 0 12px;
 }
 
+h3 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+
 p {
   color: var(--muted);
   font-size: 16px;
@@ -66,10 +76,36 @@ p {
   margin: 0;
 }
 
-.hero-grid {
+.eyebrow {
+  margin: 0 0 10px;
+  font: 12px/1.3 "IBM Plex Mono", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.hero-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.hero-copy {
+  max-width: 760px;
+}
+
+.hero-actions {
+  min-width: 220px;
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
-  gap: 18px;
+  gap: 12px;
+  justify-items: end;
+}
+
+.setup-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
   align-items: start;
   margin-top: 24px;
 }
@@ -79,6 +115,10 @@ p {
   border: 1px solid var(--border);
   border-radius: 18px;
   padding: 18px;
+}
+
+.setup-card {
+  height: 100%;
 }
 
 button {
@@ -104,6 +144,11 @@ button.secondary {
   color: var(--ink);
 }
 
+.compact {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
 button.secondary:hover {
   background: rgba(27, 28, 29, 0.14);
 }
@@ -112,19 +157,19 @@ button.secondary:hover {
   min-height: 20px;
   font-size: 13px;
   color: var(--muted);
+  text-align: right;
 }
 
-.status-row {
-  margin-top: 18px;
+.section-block {
+  display: grid;
+  gap: 12px;
+}
+
+.section-heading {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
-  align-items: center;
-}
-
-.dashboard {
-  display: grid;
   gap: 18px;
+  align-items: end;
 }
 
 .kpi-grid {
@@ -158,15 +203,19 @@ button.secondary:hover {
   gap: 18px;
 }
 
+.grid-span-2 {
+  grid-column: 1 / -1;
+}
+
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 22px;
 }
 
 h2 {
-  margin: 0 0 14px;
-  font-size: 18px;
+  margin: 0;
+  font-size: 20px;
 }
 
 pre {
@@ -178,6 +227,8 @@ pre {
   color: var(--ink);
   font: 13px/1.6 "IBM Plex Mono", monospace;
   overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 ul {
@@ -239,9 +290,19 @@ li {
   font-size: 13px;
 }
 
+.sidebar {
+  position: sticky;
+  top: 24px;
+  align-self: start;
+}
+
 .section-copy,
 .detail-line {
   margin-top: 8px;
+}
+
+.setup-feedback {
+  margin-top: 12px;
 }
 
 .history-item {
@@ -272,19 +333,36 @@ li {
   .layout {
     grid-template-columns: 1fr;
   }
+
+  .sidebar {
+    position: static;
+  }
 }
 
 @media (max-width: 760px) {
-  .hero-grid,
   .grid-2,
   .kpi-grid {
     grid-template-columns: 1fr;
   }
 
-  .status-row,
+  .hero-top,
+  .hero-actions,
   .split-line {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .hero-actions {
+    justify-items: start;
+    min-width: 0;
+  }
+
+  .status {
+    text-align: left;
+  }
+
+  .grid-span-2 {
+    grid-column: auto;
   }
 }
 
@@ -294,152 +372,172 @@ li {
     <main>
       <div class="shell">
         <div class="layout">
-          <div class="shell">
+          <div class="content-column">
             <section class="hero">
-              <h1>Bazel BEP Review</h1>
-              <p>
-                This page is the review surface for BEP uploads that already arrived through BES
-                gRPC handoff or the HTTP ingest path. Rendering stays in the browser; the worker
-                only stores the latest 50 uploaded reviews and serves them back to the UI.
-              </p>
-              <div class="hero-grid">
-                <section class="panel setup-panel">
+              <div class="hero-top">
+                <div>
+                  <p class="eyebrow">Bazel Review Surface</p>
+                  <h1>BEP Performance Review</h1>
+                  <p class="hero-copy">
+                    Review uploaded BES invocations without re-parsing them on the server. The
+                    worker keeps the latest 50 normalized uploads, and the browser renders cache,
+                    compile, IO, flaky-test, and timing signals locally.
+                  </p>
+                </div>
+                <div class="hero-actions">
+                  <button id="refresh-btn" class="secondary" type="button">Refresh Reviews</button>
+                  <div class="status" id="status">Loading uploaded reviews...</div>
+                </div>
+              </div>
+
+              <div class="setup-grid">
+                <section class="panel setup-card">
                   <div class="split-line">
                     <h2>Bazel Setup</h2>
-                    <span class="badge">gRPC BES</span>
+                    <button id="copy-bazel-config-btn" class="secondary compact" type="button">Copy</button>
                   </div>
                   <p class="section-copy">
-                    Point Bazel at the private gRPC ingress that sits behind Cloudflare Tunnel. The
-                    review UI reads the normalized uploads later from the worker.
+                    Put this block into your `.bazelrc`. It includes the BES endpoint, result URL,
+                    and the recommended metrics flags for this review surface.
                   </p>
-                  <pre id="bazel-grpc-config"></pre>
+                  <pre id="bazel-config"></pre>
+                  <p class="hint setup-feedback" id="copy-bazel-config-status">Ready to copy.</p>
                 </section>
 
-                <section class="dashboard">
-                  <section class="panel">
-                    <div class="split-line">
-                      <h2>Metrics Coverage</h2>
-                      <span class="badge">recommended</span>
-                    </div>
-                    <p class="section-copy">
-                      Keep action and test timing signals enabled so the browser can render cache,
-                      compile, IO, and flaky-test breakdowns from stored uploads.
-                    </p>
-                    <pre id="bazel-metrics-config"></pre>
-                  </section>
-
-                  <section class="panel">
-                    <div class="split-line">
-                      <h2>HTTP Handoff</h2>
-                      <span class="badge">grpc-ingest</span>
-                    </div>
-                    <p class="section-copy">
-                      Configure the thin gRPC ingress to post normalized invocation payloads to the
-                      worker. Uploaded records are persisted in D1 and capped at the most recent 50.
-                    </p>
-                    <pre id="sink-config"></pre>
-                  </section>
+                <section class="panel setup-card">
+                  <div class="split-line">
+                    <h2>HTTP Sink</h2>
+                    <span class="badge">worker</span>
+                  </div>
+                  <p class="section-copy">
+                    `grpc-ingest` flushes one completed invocation at a time to the worker ingress.
+                  </p>
+                  <pre id="sink-config"></pre>
                 </section>
               </div>
-              <div class="status-row">
-                <div class="status" id="status">Loading uploaded reviews...</div>
-                <button id="refresh-btn" class="secondary" type="button">Refresh Reviews</button>
+            </section>
+
+            <section class="section-block">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Selected Review</p>
+                  <h2>Summary</h2>
+                </div>
+              </div>
+              <section class="panel">
+                <div class="kpi-grid" id="summary-grid"></div>
+              </section>
+            </section>
+
+            <section class="section-block">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Build Health</p>
+                  <h2>Findings And Failures</h2>
+                </div>
+              </div>
+              <div class="grid-2">
+                <section class="panel">
+                  <h3>Findings</h3>
+                  <ul id="findings-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel">
+                  <h3>Failed Targets</h3>
+                  <ul id="failed-targets-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
               </div>
             </section>
 
-            <section class="panel">
-              <h2>Summary</h2>
-              <div class="kpi-grid" id="summary-grid"></div>
+            <section class="section-block">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Performance Hotspots</p>
+                  <h2>Cache, Tests, Compile, And IO</h2>
+                </div>
+              </div>
+              <div class="grid-2">
+                <section class="panel">
+                  <h3>Cache Overview</h3>
+                  <ul id="cache-overview-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel">
+                  <h3>Flaky Tests</h3>
+                  <ul id="flaky-tests-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel">
+                  <h3>Top Compile Time</h3>
+                  <ul id="compile-top-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel">
+                  <h3>Top IO Time</h3>
+                  <ul id="io-top-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel">
+                  <h3>Top Test Time</h3>
+                  <ul id="slow-tests-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel">
+                  <h3>Cache Miss Reasons</h3>
+                  <ul id="cache-miss-reasons-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+              </div>
             </section>
 
-            <section class="grid-2">
-              <section class="panel">
-                <h2>Findings</h2>
-                <ul id="findings-list">
-                  <li class="muted">No uploaded reviews yet.</li>
-                </ul>
-              </section>
-              <section class="panel">
-                <h2>Failed Targets</h2>
-                <ul id="failed-targets-list">
-                  <li class="muted">No uploaded reviews yet.</li>
-                </ul>
-              </section>
-            </section>
-
-            <section class="grid-2">
-              <section class="panel">
-                <h2>Cache Overview</h2>
-                <ul id="cache-overview-list">
-                  <li class="muted">No uploaded reviews yet.</li>
-                </ul>
-              </section>
-              <section class="panel">
-                <h2>Flaky Tests</h2>
-                <ul id="flaky-tests-list">
-                  <li class="muted">No uploaded reviews yet.</li>
-                </ul>
-              </section>
-            </section>
-
-            <section class="grid-2">
-              <section class="panel">
-                <h2>Top Compile Time</h2>
-                <ul id="compile-top-list">
-                  <li class="muted">No uploaded reviews yet.</li>
-                </ul>
-              </section>
-              <section class="panel">
-                <h2>Top IO Time</h2>
-                <ul id="io-top-list">
-                  <li class="muted">No uploaded reviews yet.</li>
-                </ul>
-              </section>
-            </section>
-
-            <section class="grid-2">
-              <section class="panel">
-                <h2>Top Test Time</h2>
-                <ul id="slow-tests-list">
-                  <li class="muted">No uploaded reviews yet.</li>
-                </ul>
-              </section>
-              <section class="panel">
-                <h2>Cache Miss Reasons</h2>
-                <ul id="cache-miss-reasons-list">
-                  <li class="muted">No uploaded reviews yet.</li>
-                </ul>
-              </section>
-            </section>
-
-            <section class="grid-2">
-              <section class="panel">
-                <h2>Top Action Mnemonics</h2>
-                <ul id="actions-list">
-                  <li class="muted">No uploaded reviews yet.</li>
-                </ul>
-              </section>
-              <section class="panel">
-                <h2>Runner Counts</h2>
-                <ul id="runner-counts-list">
-                  <li class="muted">No uploaded reviews yet.</li>
-                </ul>
-              </section>
-            </section>
-
-            <section class="grid-2">
-              <section class="panel">
-                <h2>Timing Breakdown</h2>
-                <ul id="timing-breakdown-list">
-                  <li class="muted">No uploaded reviews yet.</li>
-                </ul>
-              </section>
+            <section class="section-block">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Execution Signals</p>
+                  <h2>Actions, Runners, And Timing</h2>
+                </div>
+              </div>
+              <div class="grid-2">
+                <section class="panel">
+                  <h3>Top Action Mnemonics</h3>
+                  <ul id="actions-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel">
+                  <h3>Runner Counts</h3>
+                  <ul id="runner-counts-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel grid-span-2">
+                  <h3>Timing Breakdown</h3>
+                  <ul id="timing-breakdown-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+              </div>
             </section>
           </div>
 
-          <aside class="panel">
-            <h2>Uploaded Reviews</h2>
-            <p class="hint">Only the most recent 50 uploaded reviews are kept in D1.</p>
+          <aside class="panel sidebar">
+            <div class="split-line">
+              <h2>Uploaded Reviews</h2>
+              <span class="badge">latest 50</span>
+            </div>
+            <p class="hint">
+              Reviews are persisted in D1 after `/ingest`. Pick one invocation to populate the
+              dashboard.
+            </p>
             <ul id="history-list">
               <li class="muted">Loading uploaded reviews...</li>
             </ul>
@@ -453,8 +551,9 @@ li {
   var status = document.getElementById("status");
   var refreshBtn = document.getElementById("refresh-btn");
   var historyList = document.getElementById("history-list");
-  var bazelGrpcConfig = document.getElementById("bazel-grpc-config");
-  var bazelMetricsConfig = document.getElementById("bazel-metrics-config");
+  var bazelConfig = document.getElementById("bazel-config");
+  var copyBazelConfigBtn = document.getElementById("copy-bazel-config-btn");
+  var copyBazelConfigStatus = document.getElementById("copy-bazel-config-status");
   var sinkConfig = document.getElementById("sink-config");
   var summaryGrid = document.getElementById("summary-grid");
   var findingsList = document.getElementById("findings-list");
@@ -865,13 +964,11 @@ li {
   function renderSetupSnippets() {
     const grpcHost = "beplessproxy.hawkingrei.com";
     const workerOrigin = "https://bepless.hawkingrei.com";
-    bazelGrpcConfig.textContent = [
+    bazelConfig.textContent = [
       `build --bes_backend=grpcs://${grpcHost}`,
       `test --bes_backend=grpcs://${grpcHost}`,
-      "build --bes_results_url=",
-      "test --bes_results_url="
-    ].join("\n");
-    bazelMetricsConfig.textContent = [
+      `build --bes_results_url=${workerOrigin}/`,
+      `test --bes_results_url=${workerOrigin}/`,
       "build --build_event_publish_all_actions",
       "test --build_event_publish_all_actions",
       "build --experimental_build_event_upload_strategy=fully_async",
@@ -881,6 +978,15 @@ li {
       `BEPLESS_HTTP_SINK_URL=${workerOrigin}/ingest`,
       "BEPLESS_HTTP_SINK_TIMEOUT_SECONDS=30"
     ].join("\n");
+  }
+  async function copyBazelConfig() {
+    try {
+      await navigator.clipboard.writeText(bazelConfig.textContent);
+      copyBazelConfigStatus.textContent = "Copied Bazel config.";
+    } catch (error) {
+      console.error(error);
+      copyBazelConfigStatus.textContent = "Copy failed. Select the snippet manually.";
+    }
   }
   async function loadReview(reviewId) {
     status.textContent = `Loading review #${reviewId}...`;
@@ -943,6 +1049,9 @@ li {
     } catch (error) {
       console.error(error);
     }
+  });
+  copyBazelConfigBtn.addEventListener("click", async () => {
+    await copyBazelConfig();
   });
   historyList.addEventListener("click", async (event) => {
     const item = event.target.closest("[data-review-id]");

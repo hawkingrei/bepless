@@ -1,8 +1,9 @@
 const status = document.getElementById("status");
 const refreshBtn = document.getElementById("refresh-btn");
 const historyList = document.getElementById("history-list");
-const bazelGrpcConfig = document.getElementById("bazel-grpc-config");
-const bazelMetricsConfig = document.getElementById("bazel-metrics-config");
+const bazelConfig = document.getElementById("bazel-config");
+const copyBazelConfigBtn = document.getElementById("copy-bazel-config-btn");
+const copyBazelConfigStatus = document.getElementById("copy-bazel-config-status");
 const sinkConfig = document.getElementById("sink-config");
 
 const summaryGrid = document.getElementById("summary-grid");
@@ -482,13 +483,11 @@ function renderHistory(reviews) {
 function renderSetupSnippets() {
   const grpcHost = "beplessproxy.hawkingrei.com";
   const workerOrigin = "https://bepless.hawkingrei.com";
-  bazelGrpcConfig.textContent = [
+  bazelConfig.textContent = [
     `build --bes_backend=grpcs://${grpcHost}`,
     `test --bes_backend=grpcs://${grpcHost}`,
-    "build --bes_results_url=",
-    "test --bes_results_url=",
-  ].join("\n");
-  bazelMetricsConfig.textContent = [
+    `build --bes_results_url=${workerOrigin}/`,
+    `test --bes_results_url=${workerOrigin}/`,
     "build --build_event_publish_all_actions",
     "test --build_event_publish_all_actions",
     "build --experimental_build_event_upload_strategy=fully_async",
@@ -498,6 +497,16 @@ function renderSetupSnippets() {
     `BEPLESS_HTTP_SINK_URL=${workerOrigin}/ingest`,
     "BEPLESS_HTTP_SINK_TIMEOUT_SECONDS=30",
   ].join("\n");
+}
+
+async function copyBazelConfig() {
+  try {
+    await navigator.clipboard.writeText(bazelConfig.textContent);
+    copyBazelConfigStatus.textContent = "Copied Bazel config.";
+  } catch (error) {
+    console.error(error);
+    copyBazelConfigStatus.textContent = "Copy failed. Select the snippet manually.";
+  }
 }
 
 async function loadReview(reviewId) {
@@ -571,6 +580,10 @@ refreshBtn.addEventListener("click", async () => {
   } catch (error) {
     console.error(error);
   }
+});
+
+copyBazelConfigBtn.addEventListener("click", async () => {
+  await copyBazelConfig();
 });
 
 historyList.addEventListener("click", async (event) => {
