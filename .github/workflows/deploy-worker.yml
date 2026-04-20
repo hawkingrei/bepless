@@ -1,0 +1,100 @@
+name: Deploy Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Target environment
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - production
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/deploy-worker.yml"
+      - "worker/**"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/deploy-worker.yml"
+      - "worker/**"
+
+jobs:
+  deploy-dev:
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.target == 'dev')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment: dev
+    defaults:
+      run:
+        working-directory: worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: worker/package.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Verify Rust build
+        run: cargo check
+
+      - name: Deploy dev with Wrangler
+        run: npx wrangler deploy --env dev
+
+  deploy-production:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.target == 'production')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment: production
+    defaults:
+      run:
+        working-directory: worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: worker/package.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Verify Rust build
+        run: cargo check
+
+      - name: Deploy production with Wrangler
+        run: npx wrangler deploy --env production

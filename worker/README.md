@@ -54,3 +54,22 @@ npm run deploy
 `wrangler.toml` bootstraps `worker-build` with Cargo during deployment, so a clean environment does
 not need a preinstalled `worker-build` binary. The deployment environment still needs a working Rust
 toolchain because `worker-build` compiles the Rust worker to WebAssembly.
+
+## GitHub Actions Deployment
+
+This repository includes `.github/workflows/deploy-worker.yml` for CI-based deployment.
+
+Required GitHub environment secrets:
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+Create both GitHub Environments and define the same secret names in each one:
+
+- `dev`
+- `production`
+
+Cloudflare Worker environments used by `wrangler.toml`:
+
+- `dev` -> `bep-analyzer-worker-dev`
+- `production` -> `bep-analyzer-worker`

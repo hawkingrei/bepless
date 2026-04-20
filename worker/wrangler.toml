@@ -5,3 +5,9 @@ workers_dev = true
 
 [build]
 command = "cargo install -q --locked worker-build && worker-build --release"
+
+[env.dev]
+name = "bep-analyzer-worker-dev"
+
+[env.production]
+name = "bep-analyzer-worker"
