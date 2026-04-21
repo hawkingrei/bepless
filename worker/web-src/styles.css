@@ -338,7 +338,7 @@ button.secondary:hover {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) 380px;
   gap: 22px;
 }
 
@@ -379,6 +379,7 @@ li {
   border-radius: 14px;
   padding: 12px 14px;
   background: rgba(255, 255, 255, 0.64);
+  overflow-wrap: anywhere;
 }
 
 .clickable-row {
@@ -417,6 +418,11 @@ li {
   justify-content: space-between;
   gap: 16px;
   align-items: baseline;
+  min-width: 0;
+}
+
+.split-line > * {
+  min-width: 0;
 }
 
 .badge {
@@ -427,6 +433,7 @@ li {
   font-size: 12px;
   font-family: "IBM Plex Mono", monospace;
   background: rgba(27, 28, 29, 0.08);
+  flex-shrink: 0;
 }
 
 .hint {
@@ -490,7 +497,24 @@ li {
   font-size: 12px;
   color: var(--muted);
   display: grid;
-  gap: 4px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 10px;
+}
+
+.history-item .mono {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#findings-list li,
+#failed-targets-list li,
+#slow-actions-list li,
+#slow-tests-list li,
+#flaky-attempts-list li {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 @media (max-width: 1100px) {
@@ -540,5 +564,9 @@ li {
 
   .timeline-meta {
     text-align: right;
+  }
+
+  .history-meta {
+    grid-template-columns: 1fr;
   }
 }

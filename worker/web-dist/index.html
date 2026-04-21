@@ -345,7 +345,7 @@ button.secondary:hover {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) 380px;
   gap: 22px;
 }
 
@@ -386,6 +386,7 @@ li {
   border-radius: 14px;
   padding: 12px 14px;
   background: rgba(255, 255, 255, 0.64);
+  overflow-wrap: anywhere;
 }
 
 .clickable-row {
@@ -424,6 +425,11 @@ li {
   justify-content: space-between;
   gap: 16px;
   align-items: baseline;
+  min-width: 0;
+}
+
+.split-line > * {
+  min-width: 0;
 }
 
 .badge {
@@ -434,6 +440,7 @@ li {
   font-size: 12px;
   font-family: "IBM Plex Mono", monospace;
   background: rgba(27, 28, 29, 0.08);
+  flex-shrink: 0;
 }
 
 .hint {
@@ -497,7 +504,24 @@ li {
   font-size: 12px;
   color: var(--muted);
   display: grid;
-  gap: 4px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 10px;
+}
+
+.history-item .mono {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#findings-list li,
+#failed-targets-list li,
+#slow-actions-list li,
+#slow-tests-list li,
+#flaky-attempts-list li {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 @media (max-width: 1100px) {
@@ -547,6 +571,10 @@ li {
 
   .timeline-meta {
     text-align: right;
+  }
+
+  .history-meta {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -879,6 +907,9 @@ li {
   var activeTab = "summary";
   var activeFlakyLabel = null;
   var activeTimelineFilter = "longest";
+  var currentHistoryReviews = [];
+  var historySummaryCache = /* @__PURE__ */ new Map();
+  var historySummaryInflight = /* @__PURE__ */ new Set();
   window.__lastBrowserInsights = null;
   var INVOCATION_LOOKUP_MAX_ATTEMPTS = 5;
   var INVOCATION_LOOKUP_BASE_BACKOFF_MS = 800;
@@ -1025,6 +1056,13 @@ li {
     const token = text.slice(index + "Critical Path:".length).trim().split(/\s+/)[0];
     return parseDurationMs(token);
   }
+  function stripAnsi(value) {
+    return String(value || "").replaceAll(
+      // eslint-disable-next-line no-control-regex
+      /\u001b\[[0-9;]*m/g,
+      ""
+    );
+  }
   function inferCommandFromOptionsParsed(optionsParsed) {
     for (const key of ["cmdLine", "explicitCmdLine"]) {
       for (const entry of optionsParsed?.[key] || []) {
@@ -1152,6 +1190,9 @@ li {
     const testStrategyCounts = {};
     const timingBreakdownMs = {};
     const topActionEntries = [];
+    let abortReason = null;
+    let abortDescription = null;
+    let firstErrorLine = null;
     const storedSummary = storedAnalysis?.summary || {};
     const summary = {
       invocation_id: storedSummary.invocation_id || null,
@@ -1310,6 +1351,14 @@ li {
           }
         }
       }
+      if (event.aborted) {
+        if (!abortReason && event.aborted.reason) {
+          abortReason = String(event.aborted.reason);
+        }
+        if (!abortDescription && event.aborted.description) {
+          abortDescription = String(event.aborted.description);
+        }
+      }
       if (event.id && event.id.actionCompleted && event.action) {
         const actionId = event.id.actionCompleted;
         const action = event.action;
@@ -1376,6 +1425,13 @@ li {
         const criticalPathMs = parseCriticalPathMs(event.progress.stderr);
         if (criticalPathMs !== null) {
           summary.critical_path_ms = criticalPathMs;
+        }
+      }
+      if (event.progress?.stderr && !firstErrorLine) {
+        const cleaned = stripAnsi(event.progress.stderr);
+        const matchedLine = cleaned.split("\n").map((line2) => line2.trim()).find((line2) => line2.includes("ERROR:") || line2.includes("WARNING:"));
+        if (matchedLine) {
+          firstErrorLine = matchedLine;
         }
       }
       if (event.id?.targetConfigured && event.configured) {
@@ -1475,6 +1531,24 @@ li {
       }
     }
     summary.failed_targets = failedTargets.length;
+    if (summary.success === null && abortReason) {
+      summary.success = false;
+    }
+    const findings = buildFindings(summary, tests.slice(0, 10), topActionMnemonics, timingBreakdownMs);
+    if (abortReason) {
+      findings.unshift({
+        severity: "high",
+        category: "abort",
+        message: abortDescription ? `Build aborted before completion: ${abortReason}. ${abortDescription}` : `Build aborted before completion: ${abortReason}.`
+      });
+    }
+    if (firstErrorLine) {
+      findings.unshift({
+        severity: "high",
+        category: "startup",
+        message: firstErrorLine
+      });
+    }
     return {
       analysis: {
         summary,
@@ -1484,7 +1558,7 @@ li {
         runner_counts: runnerCounts,
         test_strategy_counts: testStrategyCounts,
         timing_breakdown_ms: timingBreakdownMs,
-        findings: buildFindings(summary, tests.slice(0, 10), topActionMnemonics, timingBreakdownMs)
+        findings
       },
       cacheOverview,
       hostJvmArgs: Array.from(hostJvmArgs),
@@ -1965,16 +2039,54 @@ li {
   function reviewLabel(review) {
     return review.invocation_id || review.summary.invocation_id || review.build_id || review.project_id || review.summary.command || "unknown";
   }
+  function reviewSummary(review) {
+    return historySummaryCache.get(review.id)?.analysis.summary || review.summary;
+  }
+  function reviewNeedsHydration(review) {
+    const summary = reviewSummary(review);
+    return summary.success === null || summary.wall_time_ms === null || summary.critical_path_ms === null || summary.command === null;
+  }
   function reviewStatus(review) {
-    return review.summary.success === true ? "success" : review.summary.success === false ? "failed" : "n/a";
+    const summary = reviewSummary(review);
+    return summary.success === true ? "success" : summary.success === false ? "failed" : "n/a";
+  }
+  async function fetchReviewDetail(reviewId) {
+    const response = await fetch(`/api/reviews/${reviewId}`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Failed to load review #${reviewId}.`);
+    }
+    return response.json();
+  }
+  function queueHistoryHydration(reviews) {
+    for (const review of reviews) {
+      if (!reviewNeedsHydration(review)) continue;
+      if (historySummaryCache.has(review.id) || historySummaryInflight.has(review.id)) continue;
+      historySummaryInflight.add(review.id);
+      fetchReviewDetail(review.id).then((detail) => {
+        const browserInsights = summarizeBrowserInsights(detail.ingest_body, detail.analysis);
+        historySummaryCache.set(review.id, browserInsights);
+        if (currentReviewId === review.id) {
+          renderAnalysis(browserInsights.analysis, browserInsights);
+        }
+      }).catch((error) => {
+        console.error(error);
+        historySummaryCache.delete(review.id);
+      }).finally(() => {
+        historySummaryInflight.delete(review.id);
+        renderHistory(currentHistoryReviews);
+      });
+    }
   }
   function renderHistory(reviews) {
     if (!reviews || reviews.length === 0) {
+      currentHistoryReviews = [];
       historyList.innerHTML = '<li class="muted">No uploaded reviews yet.</li>';
       return;
     }
-    historyList.innerHTML = reviews.map(
-      (review) => `
+    currentHistoryReviews = reviews;
+    historyList.innerHTML = reviews.map((review) => {
+      const summary = reviewSummary(review);
+      return `
         <li class="history-item ${review.id === currentReviewId ? "history-item-active" : ""}" data-review-id="${review.id}">
           <div class="split-line">
             <strong class="mono">${reviewLabel(review)}</strong>
@@ -1982,12 +2094,13 @@ li {
           </div>
           <div class="history-meta">
             <span>${new Date(review.uploaded_at_ms).toLocaleString()}</span>
-            <span>critical=${formatMs(review.summary.critical_path_ms)}</span>
-            <span>wall=${formatMs(review.summary.wall_time_ms ?? review.summary.elapsed_ms)}</span>
+            <span>critical=${formatMs(summary.critical_path_ms)}</span>
+            <span>wall=${formatMs(summary.wall_time_ms ?? summary.elapsed_ms)}</span>
           </div>
         </li>
-      `
-    ).join("");
+      `;
+    }).join("");
+    queueHistoryHydration(reviews);
   }
   function renderSetupSnippets() {
     const grpcHost = "beplessproxy.hawkingrei.com";
@@ -2018,14 +2131,9 @@ li {
   }
   async function loadReview(reviewId) {
     status.textContent = `Loading review #${reviewId}...`;
-    const response = await fetch(`/api/reviews/${reviewId}`);
-    if (!response.ok) {
-      const message = `Failed to load review #${reviewId}.`;
-      status.textContent = message;
-      throw new Error(message);
-    }
-    const review = await response.json();
+    const review = await fetchReviewDetail(reviewId);
     const browserInsights = summarizeBrowserInsights(review.ingest_body, review.analysis);
+    historySummaryCache.set(review.id, browserInsights);
     currentReviewId = review.id;
     renderHistory(await fetchReviews(false));
     renderAnalysis(browserInsights.analysis, browserInsights);
@@ -2036,7 +2144,7 @@ li {
     if (updateStatus) {
       status.textContent = "Loading uploaded reviews...";
     }
-    const response = await fetch("/api/reviews");
+    const response = await fetch("/api/reviews", { cache: "no-store" });
     if (!response.ok) {
       const message = "Failed to load uploaded reviews.";
       status.textContent = message;

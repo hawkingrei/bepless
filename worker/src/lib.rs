@@ -10,8 +10,8 @@ use serde_json::{json, Map, Value};
 use worker::js_sys::Date;
 use worker::wasm_bindgen::JsValue;
 use worker::{
-    console_error, console_log, event, Bucket, Context, D1Database, FormEntry, Method, Request,
-    Response, Result,
+    console_error, console_log, event, Bucket, Context, D1Database, FormEntry, Headers, Method,
+    Request, Response, Result,
 };
 
 const CHUNK_BUCKET_BINDING: &str = "BEPLESS_CHUNKS";
@@ -575,6 +575,7 @@ async fn analyze_request(req: &mut Request) -> Result<Response> {
     response
         .headers_mut()
         .set("content-type", "application/json; charset=utf-8")?;
+    set_no_store_headers(response.headers_mut())?;
     apply_cors(response)
 }
 
@@ -608,6 +609,7 @@ async fn ingest_request(req: &mut Request, env: &worker::Env) -> Result<Response
     response
         .headers_mut()
         .set("content-type", "application/json; charset=utf-8")?;
+    set_no_store_headers(response.headers_mut())?;
     apply_cors(response)
 }
 
@@ -662,6 +664,7 @@ async fn ingest_chunk_request(req: &mut Request, env: &worker::Env) -> Result<Re
     response
         .headers_mut()
         .set("content-type", "application/json; charset=utf-8")?;
+    set_no_store_headers(response.headers_mut())?;
     apply_cors(response)
 }
 
@@ -686,6 +689,7 @@ async fn ingest_finalize_request(req: &mut Request, env: &worker::Env) -> Result
         response
             .headers_mut()
             .set("content-type", "application/json; charset=utf-8")?;
+        set_no_store_headers(response.headers_mut())?;
         return apply_cors(response);
     }
 
@@ -725,6 +729,7 @@ async fn ingest_finalize_request(req: &mut Request, env: &worker::Env) -> Result
         response
             .headers_mut()
             .set("content-type", "application/json; charset=utf-8")?;
+        set_no_store_headers(response.headers_mut())?;
         return apply_cors(response);
     }
 
@@ -798,6 +803,7 @@ async fn ingest_finalize_request(req: &mut Request, env: &worker::Env) -> Result
     response
         .headers_mut()
         .set("content-type", "application/json; charset=utf-8")?;
+    set_no_store_headers(response.headers_mut())?;
     apply_cors(response)
 }
 
@@ -844,6 +850,7 @@ async fn list_reviews(env: &worker::Env) -> Result<Response> {
     response
         .headers_mut()
         .set("content-type", "application/json; charset=utf-8")?;
+    set_no_store_headers(response.headers_mut())?;
     apply_cors(response)
 }
 
@@ -894,6 +901,7 @@ async fn get_review(env: &worker::Env, path: &str) -> Result<Response> {
     response
         .headers_mut()
         .set("content-type", "application/json; charset=utf-8")?;
+    set_no_store_headers(response.headers_mut())?;
     apply_cors(response)
 }
 
@@ -2048,7 +2056,9 @@ fn non_empty_string(value: String) -> Option<String> {
 }
 
 fn cors_response() -> Result<Response> {
-    apply_cors(Response::empty()?)
+    let mut response = Response::empty()?;
+    set_no_store_headers(response.headers_mut())?;
+    apply_cors(response)
 }
 
 fn json_error(status: u16, code: &str, message: &str) -> Result<Response> {
@@ -2056,11 +2066,20 @@ fn json_error(status: u16, code: &str, message: &str) -> Result<Response> {
         "error": code,
         "message": message,
     });
-    let response = Response::from_json(&body)?.with_status(status);
+    let mut response = Response::from_json(&body)?.with_status(status);
+    set_no_store_headers(response.headers_mut())?;
     apply_cors(response)
 }
 
 fn html_response() -> Result<Response> {
-    let response = Response::from_html(include_str!("../web-dist/index.html"))?;
+    let mut response = Response::from_html(include_str!("../web-dist/index.html"))?;
+    set_no_store_headers(response.headers_mut())?;
     apply_cors(response)
+}
+
+fn set_no_store_headers(headers: &mut Headers) -> Result<()> {
+    headers.set("cache-control", "no-store, no-cache, must-revalidate, max-age=0")?;
+    headers.set("pragma", "no-cache")?;
+    headers.set("expires", "0")?;
+    Ok(())
 }

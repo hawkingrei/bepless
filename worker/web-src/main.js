@@ -39,6 +39,9 @@ let currentReviewId = null;
 let activeTab = "summary";
 let activeFlakyLabel = null;
 let activeTimelineFilter = "longest";
+let currentHistoryReviews = [];
+const historySummaryCache = new Map();
+const historySummaryInflight = new Set();
 window.__lastBrowserInsights = null;
 
 const INVOCATION_LOOKUP_MAX_ATTEMPTS = 5;
@@ -216,6 +219,14 @@ function parseCriticalPathMs(stderr) {
   return parseDurationMs(token);
 }
 
+function stripAnsi(value) {
+  return String(value || "").replaceAll(
+    // eslint-disable-next-line no-control-regex
+    /\u001b\[[0-9;]*m/g,
+    "",
+  );
+}
+
 function inferCommandFromOptionsParsed(optionsParsed) {
   for (const key of ["cmdLine", "explicitCmdLine"]) {
     for (const entry of optionsParsed?.[key] || []) {
@@ -357,6 +368,9 @@ function summarizeBrowserInsights(input, storedAnalysis = null) {
   const testStrategyCounts = {};
   const timingBreakdownMs = {};
   const topActionEntries = [];
+  let abortReason = null;
+  let abortDescription = null;
+  let firstErrorLine = null;
   const storedSummary = storedAnalysis?.summary || {};
   const summary = {
     invocation_id: storedSummary.invocation_id || null,
@@ -529,6 +543,15 @@ function summarizeBrowserInsights(input, storedAnalysis = null) {
       }
     }
 
+    if (event.aborted) {
+      if (!abortReason && event.aborted.reason) {
+        abortReason = String(event.aborted.reason);
+      }
+      if (!abortDescription && event.aborted.description) {
+        abortDescription = String(event.aborted.description);
+      }
+    }
+
     if (event.id && event.id.actionCompleted && event.action) {
       const actionId = event.id.actionCompleted;
       const action = event.action;
@@ -600,6 +623,17 @@ function summarizeBrowserInsights(input, storedAnalysis = null) {
       const criticalPathMs = parseCriticalPathMs(event.progress.stderr);
       if (criticalPathMs !== null) {
         summary.critical_path_ms = criticalPathMs;
+      }
+    }
+
+    if (event.progress?.stderr && !firstErrorLine) {
+      const cleaned = stripAnsi(event.progress.stderr);
+      const matchedLine = cleaned
+        .split("\n")
+        .map((line) => line.trim())
+        .find((line) => line.includes("ERROR:") || line.includes("WARNING:"));
+      if (matchedLine) {
+        firstErrorLine = matchedLine;
       }
     }
 
@@ -716,6 +750,27 @@ function summarizeBrowserInsights(input, storedAnalysis = null) {
     }
   }
   summary.failed_targets = failedTargets.length;
+  if (summary.success === null && abortReason) {
+    summary.success = false;
+  }
+
+  const findings = buildFindings(summary, tests.slice(0, 10), topActionMnemonics, timingBreakdownMs);
+  if (abortReason) {
+    findings.unshift({
+      severity: "high",
+      category: "abort",
+      message: abortDescription
+        ? `Build aborted before completion: ${abortReason}. ${abortDescription}`
+        : `Build aborted before completion: ${abortReason}.`,
+    });
+  }
+  if (firstErrorLine) {
+    findings.unshift({
+      severity: "high",
+      category: "startup",
+      message: firstErrorLine,
+    });
+  }
 
   return {
     analysis: {
@@ -726,7 +781,7 @@ function summarizeBrowserInsights(input, storedAnalysis = null) {
       runner_counts: runnerCounts,
       test_strategy_counts: testStrategyCounts,
       timing_breakdown_ms: timingBreakdownMs,
-      findings: buildFindings(summary, tests.slice(0, 10), topActionMnemonics, timingBreakdownMs),
+      findings,
     },
     cacheOverview,
     hostJvmArgs: Array.from(hostJvmArgs),
@@ -1279,19 +1334,71 @@ function reviewLabel(review) {
   );
 }
 
+function reviewSummary(review) {
+  return historySummaryCache.get(review.id)?.analysis.summary || review.summary;
+}
+
+function reviewNeedsHydration(review) {
+  const summary = reviewSummary(review);
+  return (
+    summary.success === null ||
+    summary.wall_time_ms === null ||
+    summary.critical_path_ms === null ||
+    summary.command === null
+  );
+}
+
 function reviewStatus(review) {
-  return review.summary.success === true ? "success" : review.summary.success === false ? "failed" : "n/a";
+  const summary = reviewSummary(review);
+  return summary.success === true ? "success" : summary.success === false ? "failed" : "n/a";
+}
+
+async function fetchReviewDetail(reviewId) {
+  const response = await fetch(`/api/reviews/${reviewId}`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Failed to load review #${reviewId}.`);
+  }
+
+  return response.json();
+}
+
+function queueHistoryHydration(reviews) {
+  for (const review of reviews) {
+    if (!reviewNeedsHydration(review)) continue;
+    if (historySummaryCache.has(review.id) || historySummaryInflight.has(review.id)) continue;
+
+    historySummaryInflight.add(review.id);
+    fetchReviewDetail(review.id)
+      .then((detail) => {
+        const browserInsights = summarizeBrowserInsights(detail.ingest_body, detail.analysis);
+        historySummaryCache.set(review.id, browserInsights);
+        if (currentReviewId === review.id) {
+          renderAnalysis(browserInsights.analysis, browserInsights);
+        }
+      })
+      .catch((error) => {
+        console.error(error);
+        historySummaryCache.delete(review.id);
+      })
+      .finally(() => {
+        historySummaryInflight.delete(review.id);
+        renderHistory(currentHistoryReviews);
+      });
+  }
 }
 
 function renderHistory(reviews) {
   if (!reviews || reviews.length === 0) {
+    currentHistoryReviews = [];
     historyList.innerHTML = '<li class="muted">No uploaded reviews yet.</li>';
     return;
   }
 
+  currentHistoryReviews = reviews;
   historyList.innerHTML = reviews
-    .map(
-      (review) => `
+    .map((review) => {
+      const summary = reviewSummary(review);
+      return `
         <li class="history-item ${review.id === currentReviewId ? "history-item-active" : ""}" data-review-id="${review.id}">
           <div class="split-line">
             <strong class="mono">${reviewLabel(review)}</strong>
@@ -1299,13 +1406,15 @@ function renderHistory(reviews) {
           </div>
           <div class="history-meta">
             <span>${new Date(review.uploaded_at_ms).toLocaleString()}</span>
-            <span>critical=${formatMs(review.summary.critical_path_ms)}</span>
-            <span>wall=${formatMs(review.summary.wall_time_ms ?? review.summary.elapsed_ms)}</span>
+            <span>critical=${formatMs(summary.critical_path_ms)}</span>
+            <span>wall=${formatMs(summary.wall_time_ms ?? summary.elapsed_ms)}</span>
           </div>
         </li>
-      `,
-    )
+      `;
+    })
     .join("");
+
+  queueHistoryHydration(reviews);
 }
 
 function renderSetupSnippets() {
@@ -1340,15 +1449,9 @@ async function copyBazelConfig() {
 async function loadReview(reviewId) {
   status.textContent = `Loading review #${reviewId}...`;
 
-  const response = await fetch(`/api/reviews/${reviewId}`);
-  if (!response.ok) {
-    const message = `Failed to load review #${reviewId}.`;
-    status.textContent = message;
-    throw new Error(message);
-  }
-
-  const review = await response.json();
+  const review = await fetchReviewDetail(reviewId);
   const browserInsights = summarizeBrowserInsights(review.ingest_body, review.analysis);
+  historySummaryCache.set(review.id, browserInsights);
   currentReviewId = review.id;
   renderHistory(await fetchReviews(false));
   renderAnalysis(browserInsights.analysis, browserInsights);
@@ -1361,7 +1464,7 @@ async function fetchReviews(updateStatus = true) {
     status.textContent = "Loading uploaded reviews...";
   }
 
-  const response = await fetch("/api/reviews");
+  const response = await fetch("/api/reviews", { cache: "no-store" });
   if (!response.ok) {
     const message = "Failed to load uploaded reviews.";
     status.textContent = message;
