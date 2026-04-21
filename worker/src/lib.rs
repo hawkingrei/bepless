@@ -1654,15 +1654,17 @@ fn convert_test_result(test_result: &build_event_stream::TestResult) -> Value {
     );
     object.insert(
         "testAttemptStartMillisEpoch".to_string(),
-        json!(proto_timestamp_to_millis(test_result.test_attempt_start.as_ref())
-            .unwrap_or(test_result.test_attempt_start_millis_epoch)
-            .to_string()),
+        match proto_timestamp_to_millis(test_result.test_attempt_start.as_ref()) {
+            Some(millis) => json!(millis.to_string()),
+            None => Value::Null,
+        },
     );
     object.insert(
         "testAttemptDurationMillis".to_string(),
-        json!(proto_duration_to_millis(test_result.test_attempt_duration.as_ref())
-            .unwrap_or(test_result.test_attempt_duration_millis)
-            .to_string()),
+        match proto_duration_to_millis(test_result.test_attempt_duration.as_ref()) {
+            Some(millis) => json!(millis.to_string()),
+            None => Value::Null,
+        },
     );
     object.insert("warning".to_string(), json!(test_result.warning));
     object.insert(
