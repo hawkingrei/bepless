@@ -515,6 +515,48 @@ li {
   margin-top: 8px;
 }
 
+.attempt-output-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.attempt-output-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.attempt-output-item-bytestream {
+  border-color: rgba(11, 110, 79, 0.32);
+  background: rgba(11, 110, 79, 0.08);
+}
+
+.attempt-output-name {
+  font: 12px/1.4 "IBM Plex Mono", monospace;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+
+.attempt-output-link {
+  display: block;
+  font: 11px/1.5 "IBM Plex Mono", monospace;
+  color: var(--accent-strong);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-decoration: none;
+}
+
+.attempt-output-link:hover {
+  text-decoration: underline;
+}
+
+.attempt-output-link-bytestream {
+  color: #0b6e4f;
+  font-weight: 700;
+}
+
 .tag-block {
   margin-top: 18px;
   display: grid;

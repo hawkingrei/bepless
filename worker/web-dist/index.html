@@ -524,6 +524,48 @@ li {
   margin-top: 8px;
 }
 
+.attempt-output-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.attempt-output-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.attempt-output-item-bytestream {
+  border-color: rgba(11, 110, 79, 0.32);
+  background: rgba(11, 110, 79, 0.08);
+}
+
+.attempt-output-name {
+  font: 12px/1.4 "IBM Plex Mono", monospace;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+
+.attempt-output-link {
+  display: block;
+  font: 11px/1.5 "IBM Plex Mono", monospace;
+  color: var(--accent-strong);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-decoration: none;
+}
+
+.attempt-output-link:hover {
+  text-decoration: underline;
+}
+
+.attempt-output-link-bytestream {
+  color: #0b6e4f;
+  font-weight: 700;
+}
+
 .tag-block {
   margin-top: 18px;
   display: grid;
@@ -850,7 +892,8 @@ li {
                   </ul>
                 </section>
                 <section class="panel">
-                  <h3>Top Compile Time</h3>
+                  <h3>Top Compile Span</h3>
+                  <p class="muted section-copy">Wall-clock span across the first started and last finished action for each compile mnemonic.</p>
                   <ul id="compile-top-list">
                     <li class="muted">No uploaded reviews yet.</li>
                   </ul>
@@ -46017,9 +46060,18 @@ li {
         </div>
         ${item.attempt >= 2 ? '<div class="muted detail-line">flaky_attempt=true</div>' : ""}
         ${item.status_details ? `<div class="muted detail-line">${escapeHtml(item.status_details)}</div>` : ""}
-        ${item.outputs && item.outputs.length > 0 ? `<div class="muted detail-line">${item.outputs.map(
-        (output) => output.uri ? `<a href="${escapeHtml(output.uri)}" target="_blank" rel="noreferrer">${escapeHtml(output.name || output.uri)}</a>` : `<span>${escapeHtml(output.name || "output")}</span>`
-      ).join(" \xB7 ")}</div>` : ""}
+        ${item.outputs && item.outputs.length > 0 ? `<div class="muted detail-line">outputs=${item.outputs.length}</div>
+               <div class="attempt-output-list">${item.outputs.map((output, index) => {
+        const outputName = escapeHtml(output.name || `output-${index + 1}`);
+        const outputUri = output.uri ? escapeHtml(output.uri) : null;
+        const isBytestream = typeof output.uri === "string" && output.uri.startsWith("bytestream://");
+        return `
+                     <div class="attempt-output-item ${isBytestream ? "attempt-output-item-bytestream" : ""}">
+                       <div class="attempt-output-name">${outputName}</div>
+                       ${outputUri ? `<a class="attempt-output-link ${isBytestream ? "attempt-output-link-bytestream" : ""}" href="${outputUri}" target="_blank" rel="noreferrer">${outputUri}</a>` : '<div class="muted">no uri</div>'}
+                     </div>
+                   `;
+      }).join("")}</div>` : ""}
       </li>
     `,
       label ? "No test attempts recorded." : "Select a flaky test."
@@ -46146,10 +46198,10 @@ li {
       <li>
         <div class="split-line">
           <strong>${item.name}</strong>
-          <span class="badge">${formatMs(item.duration_ms)}</span>
+          <span class="badge">span=${formatMs(item.duration_ms)}</span>
         </div>
         <div class="muted detail-line">
-          actions=${item.actions_executed} user=${formatMs(item.user_time_ms)} system=${formatMs(item.system_time_ms)}
+          actions=${item.actions_executed} cpu_user=${formatMs(item.user_time_ms)} cpu_system=${formatMs(item.system_time_ms)}
         </div>
       </li>
     `,
@@ -46275,10 +46327,10 @@ li {
       <li>
         <div class="split-line">
           <strong>${item.mnemonic}</strong>
-          <span class="badge">${formatMs(item.span_ms)}</span>
+          <span class="badge">span=${formatMs(item.span_ms)}</span>
         </div>
         <div class="muted detail-line">
-          actions=${item.actions_executed} user=${formatMs(item.user_time_ms)} system=${formatMs(item.system_time_ms)}
+          actions=${item.actions_executed} cpu_user=${formatMs(item.user_time_ms)} cpu_system=${formatMs(item.system_time_ms)}
         </div>
       </li>
     `,

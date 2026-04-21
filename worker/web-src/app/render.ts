@@ -217,13 +217,24 @@ export function renderFlakyAttempts(insights: any, label: string | null) {
         ${item.status_details ? `<div class="muted detail-line">${escapeHtml(item.status_details)}</div>` : ""}
         ${
           item.outputs && item.outputs.length > 0
-            ? `<div class="muted detail-line">${item.outputs
-                .map((output: any) =>
-                  output.uri
-                    ? `<a href="${escapeHtml(output.uri)}" target="_blank" rel="noreferrer">${escapeHtml(output.name || output.uri)}</a>`
-                    : `<span>${escapeHtml(output.name || "output")}</span>`,
-                )
-                .join(" · ")}</div>`
+            ? `<div class="muted detail-line">outputs=${item.outputs.length}</div>
+               <div class="attempt-output-list">${item.outputs
+                 .map((output: any, index: number) => {
+                 const outputName = escapeHtml(output.name || `output-${index + 1}`);
+                   const outputUri = output.uri ? escapeHtml(output.uri) : null;
+                   const isBytestream = typeof output.uri === "string" && output.uri.startsWith("bytestream://");
+                   return `
+                     <div class="attempt-output-item ${isBytestream ? "attempt-output-item-bytestream" : ""}">
+                       <div class="attempt-output-name">${outputName}</div>
+                       ${
+                         outputUri
+                           ? `<a class="attempt-output-link ${isBytestream ? "attempt-output-link-bytestream" : ""}" href="${outputUri}" target="_blank" rel="noreferrer">${outputUri}</a>`
+                           : '<div class="muted">no uri</div>'
+                       }
+                     </div>
+                   `;
+                 })
+                 .join("")}</div>`
             : ""
         }
       </li>
@@ -368,10 +379,10 @@ export function renderBrowserInsights(insights: any, options: AnalysisRenderOpti
       <li>
         <div class="split-line">
           <strong>${item.name}</strong>
-          <span class="badge">${formatMs(item.duration_ms)}</span>
+          <span class="badge">span=${formatMs(item.duration_ms)}</span>
         </div>
         <div class="muted detail-line">
-          actions=${item.actions_executed} user=${formatMs(item.user_time_ms)} system=${formatMs(item.system_time_ms)}
+          actions=${item.actions_executed} cpu_user=${formatMs(item.user_time_ms)} cpu_system=${formatMs(item.system_time_ms)}
         </div>
       </li>
     `,
@@ -507,10 +518,10 @@ export function renderAnalysis(payload: any, browserInsights: any, options: Anal
       <li>
         <div class="split-line">
           <strong>${item.mnemonic}</strong>
-          <span class="badge">${formatMs(item.span_ms)}</span>
+          <span class="badge">span=${formatMs(item.span_ms)}</span>
         </div>
         <div class="muted detail-line">
-          actions=${item.actions_executed} user=${formatMs(item.user_time_ms)} system=${formatMs(item.system_time_ms)}
+          actions=${item.actions_executed} cpu_user=${formatMs(item.user_time_ms)} cpu_system=${formatMs(item.system_time_ms)}
         </div>
       </li>
     `,
