@@ -9,5 +9,8 @@
   "devDependencies": {
     "esbuild": "^0.25.11",
     "wrangler": "^4"
+  },
+  "dependencies": {
+    "vis-timeline": "^8.5.0"
   }
 }

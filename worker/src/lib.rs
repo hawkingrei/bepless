@@ -1644,6 +1644,37 @@ fn convert_test_result(test_result: &build_event_stream::TestResult) -> Value {
             .map(|status| status.as_str_name())
             .unwrap_or("NO_STATUS")),
     );
+    object.insert(
+        "statusDetails".to_string(),
+        json!(test_result.status_details),
+    );
+    object.insert(
+        "cachedLocally".to_string(),
+        json!(test_result.cached_locally),
+    );
+    object.insert(
+        "testAttemptStartMillisEpoch".to_string(),
+        json!(proto_timestamp_to_millis(test_result.test_attempt_start.as_ref())
+            .unwrap_or(test_result.test_attempt_start_millis_epoch)
+            .to_string()),
+    );
+    object.insert(
+        "testAttemptDurationMillis".to_string(),
+        json!(proto_duration_to_millis(test_result.test_attempt_duration.as_ref())
+            .unwrap_or(test_result.test_attempt_duration_millis)
+            .to_string()),
+    );
+    object.insert("warning".to_string(), json!(test_result.warning));
+    object.insert(
+        "testActionOutput".to_string(),
+        Value::Array(
+            test_result
+                .test_action_output
+                .iter()
+                .map(convert_file)
+                .collect(),
+        ),
+    );
 
     if let Some(execution_info) = test_result.execution_info.as_ref() {
         object.insert(
@@ -1652,6 +1683,30 @@ fn convert_test_result(test_result: &build_event_stream::TestResult) -> Value {
         );
     }
 
+    Value::Object(object)
+}
+
+fn convert_file(file: &build_event_stream::File) -> Value {
+    let mut object = Map::new();
+    object.insert("name".to_string(), json!(file.name));
+    object.insert("pathPrefix".to_string(), json!(file.path_prefix));
+    object.insert("digest".to_string(), json!(file.digest));
+    object.insert("length".to_string(), json!(file.length.to_string()));
+    match file.file.as_ref() {
+        Some(build_event_stream::file::File::Uri(uri)) => {
+            object.insert("uri".to_string(), json!(uri));
+        }
+        Some(build_event_stream::file::File::Contents(contents)) => {
+            object.insert(
+                "contentsBase64".to_string(),
+                json!(BASE64_STANDARD.encode(contents)),
+            );
+        }
+        Some(build_event_stream::file::File::SymlinkTargetPath(path)) => {
+            object.insert("symlinkTargetPath".to_string(), json!(path));
+        }
+        None => {}
+    }
     Value::Object(object)
 }
 

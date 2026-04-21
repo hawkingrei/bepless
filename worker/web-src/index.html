@@ -115,22 +115,22 @@
               </div>
               <section class="panel">
                 <p class="section-copy">
-                  Timeline bars are ordered by actual start time. The chart shows the build span and
-                  the longest actions with absolute timestamps present in BEP.
+                  This is a real time axis. Build spans, action execution ranges, and test attempts
+                  are placed on absolute wall-clock time. Items that start together are stacked side by side.
                 </p>
                 <div class="timeline-toolbar">
                   <div class="timeline-filters" id="timeline-filters">
-                    <button class="secondary compact timeline-filter-button timeline-filter-button-active" data-timeline-filter="longest" type="button">Longest</button>
-                    <button class="secondary compact timeline-filter-button" data-timeline-filter="all" type="button">All</button>
+                    <button class="secondary compact timeline-filter-button timeline-filter-button-active" data-timeline-filter="all" type="button">All</button>
+                    <button class="secondary compact timeline-filter-button" data-timeline-filter="action" type="button">Actions</button>
+                    <button class="secondary compact timeline-filter-button" data-timeline-filter="test" type="button">Tests</button>
                     <button class="secondary compact timeline-filter-button" data-timeline-filter="failed" type="button">Failed</button>
-                    <button class="secondary compact timeline-filter-button" data-timeline-filter="compile" type="button">Compile</button>
                   </div>
                   <label class="timeline-limit-label" for="timeline-limit">
-                    <span>Rows</span>
+                    <span>Items</span>
                     <select id="timeline-limit">
-                      <option value="12">12</option>
-                      <option value="24" selected>24</option>
-                      <option value="48">48</option>
+                      <option value="24">24</option>
+                      <option value="48" selected>48</option>
+                      <option value="96">96</option>
                     </select>
                   </label>
                 </div>

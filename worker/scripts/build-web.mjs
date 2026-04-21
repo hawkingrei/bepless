@@ -10,9 +10,13 @@ const webDistDir = path.join(workerRoot, "web-dist");
 
 const template = await readFile(path.join(webSrcDir, "index.html"), "utf8");
 const css = await readFile(path.join(webSrcDir, "styles.css"), "utf8");
+const visCss = await readFile(
+  path.join(workerRoot, "node_modules", "vis-timeline", "styles", "vis-timeline-graph2d.min.css"),
+  "utf8",
+);
 
 const jsBundle = await build({
-  entryPoints: [path.join(webSrcDir, "main.js")],
+  entryPoints: [path.join(webSrcDir, "main.ts")],
   bundle: true,
   write: false,
   format: "iife",
@@ -21,7 +25,7 @@ const jsBundle = await build({
 
 const script = jsBundle.outputFiles[0].text;
 const output = template
-  .replace("/* __BEPLESS_CSS__ */", css)
+  .replace("/* __BEPLESS_CSS__ */", `${visCss}\n${css}`)
   .replace("/* __BEPLESS_JS__ */", script);
 
 await mkdir(webDistDir, { recursive: true });
