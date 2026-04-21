@@ -103,6 +103,10 @@ p {
   margin-top: 24px;
 }
 
+.hidden {
+  display: none !important;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -156,6 +160,30 @@ button.secondary:hover {
 .section-block {
   display: grid;
   gap: 12px;
+}
+
+.tab-strip {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tab-button {
+  background: rgba(27, 28, 29, 0.08);
+  color: var(--ink);
+}
+
+.tab-button:hover {
+  background: rgba(27, 28, 29, 0.14);
+}
+
+.tab-button-active {
+  background: var(--accent);
+  color: white;
+}
+
+.tab-button-active:hover {
+  background: var(--accent-strong);
 }
 
 .section-heading {
@@ -222,6 +250,12 @@ pre {
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.command-preview {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 ul {

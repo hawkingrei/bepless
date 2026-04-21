@@ -30,7 +30,7 @@
                 </div>
               </div>
 
-              <div class="setup-grid">
+              <div class="setup-grid" id="setup-grid">
                 <section class="panel setup-card">
                   <div class="split-line">
                     <h2>Bazel Setup</h2>
@@ -75,7 +75,14 @@
               </section>
             </section>
 
-            <section class="section-block">
+            <section class="tab-strip panel">
+              <button class="tab-button tab-button-active" data-tab="summary" type="button">Summary</button>
+              <button class="tab-button" data-tab="runtime" type="button">Runtime</button>
+              <button class="tab-button" data-tab="hotspots" type="button">Hotspots</button>
+              <button class="tab-button" data-tab="execution" type="button">Execution</button>
+            </section>
+
+            <section class="section-block tab-panel" data-tab-panel="summary">
               <div class="section-heading">
                 <div>
                   <p class="eyebrow">Build Health</p>
@@ -98,7 +105,48 @@
               </div>
             </section>
 
-            <section class="section-block">
+            <section class="section-block tab-panel" data-tab-panel="runtime">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Invocation Runtime</p>
+                  <h2>JVM And Timing</h2>
+                </div>
+              </div>
+              <div class="grid-2">
+                <section class="panel">
+                  <h3>Host JVM Args</h3>
+                  <ul id="host-jvm-args-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel">
+                  <h3>Bazel JVM Heap Metrics</h3>
+                  <ul id="jvm-metrics-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel grid-span-2">
+                  <h3>Bazel Timing Metrics</h3>
+                  <ul id="timing-metrics-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel">
+                  <h3>Network Metrics</h3>
+                  <ul id="network-metrics-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel">
+                  <h3>Worker Stats</h3>
+                  <ul id="worker-stats-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+              </div>
+            </section>
+
+            <section class="section-block tab-panel" data-tab-panel="hotspots">
               <div class="section-heading">
                 <div>
                   <p class="eyebrow">Performance Hotspots</p>
@@ -130,6 +178,12 @@
                     <li class="muted">No uploaded reviews yet.</li>
                   </ul>
                 </section>
+                <section class="panel grid-span-2">
+                  <h3>Slow Actions</h3>
+                  <ul id="slow-actions-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
                 <section class="panel">
                   <h3>Top Test Time</h3>
                   <ul id="slow-tests-list">
@@ -145,7 +199,7 @@
               </div>
             </section>
 
-            <section class="section-block">
+            <section class="section-block tab-panel" data-tab-panel="execution">
               <div class="section-heading">
                 <div>
                   <p class="eyebrow">Execution Signals</p>

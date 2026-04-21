@@ -1,6 +1,9 @@
 const status = document.getElementById("status");
 const refreshBtn = document.getElementById("refresh-btn");
 const historyList = document.getElementById("history-list");
+const setupGrid = document.getElementById("setup-grid");
+const tabButtons = Array.from(document.querySelectorAll("[data-tab]"));
+const tabPanels = Array.from(document.querySelectorAll("[data-tab-panel]"));
 const bazelConfig = document.getElementById("bazel-config");
 const copyBazelConfigBtn = document.getElementById("copy-bazel-config-btn");
 const copyBazelConfigStatus = document.getElementById("copy-bazel-config-status");
@@ -8,6 +11,11 @@ const sinkConfig = document.getElementById("sink-config");
 
 const summaryGrid = document.getElementById("summary-grid");
 const keywordList = document.getElementById("keyword-list");
+const hostJvmArgsList = document.getElementById("host-jvm-args-list");
+const jvmMetricsList = document.getElementById("jvm-metrics-list");
+const timingMetricsList = document.getElementById("timing-metrics-list");
+const networkMetricsList = document.getElementById("network-metrics-list");
+const workerStatsList = document.getElementById("worker-stats-list");
 const findingsList = document.getElementById("findings-list");
 const failedTargetsList = document.getElementById("failed-targets-list");
 const cacheOverviewList = document.getElementById("cache-overview-list");
@@ -15,12 +23,14 @@ const cacheMissReasonsList = document.getElementById("cache-miss-reasons-list");
 const flakyTestsList = document.getElementById("flaky-tests-list");
 const compileTopList = document.getElementById("compile-top-list");
 const ioTopList = document.getElementById("io-top-list");
+const slowActionsList = document.getElementById("slow-actions-list");
 const slowTestsList = document.getElementById("slow-tests-list");
 const actionsList = document.getElementById("actions-list");
 const runnerCountsList = document.getElementById("runner-counts-list");
 const timingBreakdownList = document.getElementById("timing-breakdown-list");
 
 let currentReviewId = null;
+let activeTab = "summary";
 
 function currentInvocationPath() {
   const trimmed = window.location.pathname.replace(/^\/+|\/+$/g, "");
@@ -31,6 +41,21 @@ function syncInvocationPath(invocationId) {
   const nextPath = invocationId ? `/${encodeURIComponent(invocationId)}` : "/";
   if (window.location.pathname !== nextPath) {
     window.history.replaceState(null, "", nextPath);
+  }
+  syncSetupVisibility();
+}
+
+function syncSetupVisibility() {
+  setupGrid.classList.toggle("hidden", Boolean(currentInvocationPath()));
+}
+
+function setActiveTab(tab) {
+  activeTab = tab;
+  for (const button of tabButtons) {
+    button.classList.toggle("tab-button-active", button.dataset.tab === tab);
+  }
+  for (const panel of tabPanels) {
+    panel.classList.toggle("hidden", panel.dataset.tabPanel !== tab);
   }
 }
 
@@ -43,6 +68,19 @@ function formatMs(value) {
 function formatPercent(value) {
   if (value === null || value === undefined) return "n/a";
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatBytes(value) {
+  if (value === null || value === undefined) return "n/a";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = Number(value);
+  if (!Number.isFinite(size)) return "n/a";
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)}${units[unitIndex]}`;
 }
 
 function toNumber(value) {
@@ -134,10 +172,16 @@ function isFlakyTest(test) {
 function summarizeBrowserInsights(input) {
   const compileItems = [];
   const ioItems = [];
+  const slowActions = [];
   const tests = [];
   const flakyTests = [];
   const cacheMissReasons = new Map();
+  const hostJvmArgs = new Set();
   let cacheOverview = null;
+  let jvmMetrics = null;
+  let timingMetrics = null;
+  let networkMetrics = null;
+  const workerMetrics = [];
 
   for (const rawLine of input.split("\n")) {
     const line = rawLine.trim();
@@ -180,6 +224,93 @@ function summarizeBrowserInsights(input) {
       }
     }
 
+    if (buildMetrics && buildMetrics.memoryMetrics) {
+      const memoryMetrics = buildMetrics.memoryMetrics;
+      jvmMetrics = {
+        used_heap_size_post_build: toNumber(memoryMetrics.usedHeapSizePostBuild),
+        peak_post_gc_heap_size: toNumber(memoryMetrics.peakPostGcHeapSize),
+        peak_post_gc_tenured_space_heap_size: toNumber(memoryMetrics.peakPostGcTenuredSpaceHeapSize),
+        garbage_metrics: Array.isArray(memoryMetrics.garbageMetrics) ? memoryMetrics.garbageMetrics : [],
+      };
+    }
+
+    if (buildMetrics && buildMetrics.timingMetrics) {
+      const metrics = buildMetrics.timingMetrics;
+      timingMetrics = {
+        wall_time_ms: toNumber(metrics.wallTimeInMs),
+        cpu_time_ms: toNumber(metrics.cpuTimeInMs),
+        analysis_phase_time_ms: toNumber(metrics.analysisPhaseTimeInMs),
+        execution_phase_time_ms: toNumber(metrics.executionPhaseTimeInMs),
+      };
+    }
+
+    if (buildMetrics && buildMetrics.networkMetrics && buildMetrics.networkMetrics.systemNetworkStats) {
+      const stats = buildMetrics.networkMetrics.systemNetworkStats;
+      networkMetrics = {
+        bytes_sent: toNumber(stats.bytesSent),
+        bytes_recv: toNumber(stats.bytesRecv),
+        packets_sent: toNumber(stats.packetsSent),
+        packets_recv: toNumber(stats.packetsRecv),
+        peak_bytes_sent_per_sec: toNumber(stats.peakBytesSentPerSec),
+        peak_bytes_recv_per_sec: toNumber(stats.peakBytesRecvPerSec),
+        peak_packets_sent_per_sec: toNumber(stats.peakPacketsSentPerSec),
+        peak_packets_recv_per_sec: toNumber(stats.peakPacketsRecvPerSec),
+      };
+    }
+
+    if (buildMetrics && Array.isArray(buildMetrics.workerMetrics)) {
+      for (const metric of buildMetrics.workerMetrics) {
+        const latestStats = Array.isArray(metric.workerStats) && metric.workerStats.length > 0
+          ? metric.workerStats[metric.workerStats.length - 1]
+          : null;
+        workerMetrics.push({
+          mnemonic: metric.mnemonic || "unknown",
+          worker_status: metric.workerStatus || "UNKNOWN",
+          actions_executed: toNumber(metric.actionsExecuted),
+          prior_actions_executed: toNumber(metric.priorActionsExecuted),
+          is_multiplex: Boolean(metric.isMultiplex),
+          is_sandbox: Boolean(metric.isSandbox),
+          worker_memory_kb: latestStats ? toNumber(latestStats.workerMemoryInKb) : null,
+          prior_worker_memory_kb: latestStats ? toNumber(latestStats.priorWorkerMemoryInKb) : null,
+        });
+      }
+    }
+
+    if (event.optionsParsed) {
+      for (const option of event.optionsParsed.startupOptions || []) {
+        if (String(option).includes("jvm")) {
+          hostJvmArgs.add(option);
+        }
+      }
+      for (const option of event.optionsParsed.explicitStartupOptions || []) {
+        if (String(option).includes("jvm")) {
+          hostJvmArgs.add(option);
+        }
+      }
+    }
+
+    if (event.id && event.id.actionCompleted && event.action) {
+      const actionId = event.id.actionCompleted;
+      const action = event.action;
+      const startTimeMs = toNumber(action.startTimeMillis);
+      const endTimeMs = toNumber(action.endTimeMillis);
+      const durationMs =
+        startTimeMs !== null && endTimeMs !== null ? Math.max(0, endTimeMs - startTimeMs) : null;
+      const commandLine = Array.isArray(action.commandLine) ? action.commandLine.filter(Boolean) : [];
+
+      slowActions.push({
+        label: actionId.label || "<unknown>",
+        mnemonic: action.type || "unknown",
+        primary_output: action.primaryOutput || actionId.primaryOutput || "n/a",
+        duration_ms: durationMs,
+        success: action.success,
+        exit_code: toNumber(action.exitCode),
+        command_line: commandLine,
+        command_preview: commandLine.join(" "),
+        failure_detail: action.failureDetail || "",
+      });
+    }
+
     if (event.id && event.id.testSummary && event.testSummary) {
       const summary = event.testSummary;
       const test = {
@@ -219,14 +350,23 @@ function summarizeBrowserInsights(input) {
 
   compileItems.sort((left, right) => right.duration_ms - left.duration_ms);
   ioItems.sort((left, right) => right.duration_ms - left.duration_ms);
+  slowActions.sort((left, right) => (right.duration_ms ?? -1) - (left.duration_ms ?? -1));
   tests.sort((left, right) => right.duration_ms - left.duration_ms);
   flakyTests.sort((left, right) => right.duration_ms - left.duration_ms);
 
   return {
     cacheOverview,
+    hostJvmArgs: Array.from(hostJvmArgs),
+    jvmMetrics,
+    timingMetrics,
+    networkMetrics,
+    workerMetrics: workerMetrics
+      .sort((left, right) => (right.worker_memory_kb ?? -1) - (left.worker_memory_kb ?? -1))
+      .slice(0, 10),
     cacheMissReasons: Array.from(cacheMissReasons.entries()).sort((left, right) => right[1] - left[1]),
     topCompileItems: compileItems.slice(0, 10),
     topIoItems: ioItems.filter((item) => item.duration_ms > 0).slice(0, 10),
+    slowActions: slowActions.filter((item) => item.duration_ms !== null).slice(0, 10),
     topTests: tests.slice(0, 10),
     flakyTests: flakyTests.slice(0, 10),
   };
@@ -279,6 +419,94 @@ function renderKeywords(keywords) {
 }
 
 function renderBrowserInsights(insights) {
+  createListItems(
+    hostJvmArgsList,
+    insights.hostJvmArgs,
+    (item) => `
+      <li><span class="mono">${item}</span></li>
+    `,
+    "No JVM startup options reported.",
+  );
+
+  createListItems(
+    jvmMetricsList,
+    insights.jvmMetrics ? [
+      ["Used Heap Post Build", formatBytes(insights.jvmMetrics.used_heap_size_post_build)],
+      ["Peak Post-GC Heap", formatBytes(insights.jvmMetrics.peak_post_gc_heap_size)],
+      [
+        "Peak Tenured Post-GC Heap",
+        formatBytes(insights.jvmMetrics.peak_post_gc_tenured_space_heap_size),
+      ],
+    ] : [],
+    ([label, value]) => `
+      <li class="split-line">
+        <span>${label}</span>
+        <span class="badge">${value}</span>
+      </li>
+    `,
+    "No Bazel JVM heap metrics.",
+  );
+
+  createListItems(
+    timingMetricsList,
+    insights.timingMetrics ? [
+      ["Wall Time", formatMs(insights.timingMetrics.wall_time_ms)],
+      ["CPU Time", formatMs(insights.timingMetrics.cpu_time_ms)],
+      ["Analysis Phase", formatMs(insights.timingMetrics.analysis_phase_time_ms)],
+      ["Execution Phase", formatMs(insights.timingMetrics.execution_phase_time_ms)],
+    ] : [],
+    ([label, value]) => `
+      <li class="split-line">
+        <span>${label}</span>
+        <span class="badge">${value}</span>
+      </li>
+    `,
+    "No Bazel timing metrics.",
+  );
+
+  createListItems(
+    networkMetricsList,
+    insights.networkMetrics ? [
+      ["Bytes Sent", formatBytes(insights.networkMetrics.bytes_sent)],
+      ["Bytes Recv", formatBytes(insights.networkMetrics.bytes_recv)],
+      ["Packets Sent", insights.networkMetrics.packets_sent ?? "n/a"],
+      ["Packets Recv", insights.networkMetrics.packets_recv ?? "n/a"],
+      ["Peak Send Throughput", `${formatBytes(insights.networkMetrics.peak_bytes_sent_per_sec)}/s`],
+      ["Peak Recv Throughput", `${formatBytes(insights.networkMetrics.peak_bytes_recv_per_sec)}/s`],
+    ] : [],
+    ([label, value]) => `
+      <li class="split-line">
+        <span>${label}</span>
+        <span class="badge">${value}</span>
+      </li>
+    `,
+    "No network metrics.",
+  );
+
+  createListItems(
+    workerStatsList,
+    insights.workerMetrics,
+    (item) => `
+      <li>
+        <div class="split-line">
+          <strong>${item.mnemonic}</strong>
+          <span class="badge">${item.worker_status}</span>
+        </div>
+        <div class="muted detail-line">
+          actions=${item.actions_executed ?? "n/a"} prior_actions=${item.prior_actions_executed ?? "n/a"}
+        </div>
+        <div class="muted detail-line">
+          memory=${item.worker_memory_kb === null ? "n/a" : formatBytes(item.worker_memory_kb * 1024)}
+          prior_memory=${item.prior_worker_memory_kb === null ? "n/a" : formatBytes(item.prior_worker_memory_kb * 1024)}
+        </div>
+        <div class="muted detail-line">
+          multiplex=${String(item.is_multiplex)} sandbox=${String(item.is_sandbox)}
+        </div>
+      </li>
+    `,
+    "No worker stats.",
+  );
+
   createListItems(
     cacheOverviewList,
     insights.cacheOverview ? [insights.cacheOverview] : [],
@@ -346,6 +574,28 @@ function renderBrowserInsights(insights) {
       </li>
     `,
     "No IO timing breakdown found.",
+  );
+
+  createListItems(
+    slowActionsList,
+    insights.slowActions,
+    (item) => `
+      <li>
+        <div class="split-line">
+          <strong>${item.mnemonic}</strong>
+          <span class="badge">${formatMs(item.duration_ms)}</span>
+        </div>
+        <div class="muted detail-line">
+          label=${item.label} exit=${item.exit_code ?? "n/a"} success=${String(item.success)}
+        </div>
+        <div class="muted detail-line">
+          output=${item.primary_output}
+        </div>
+        ${item.failure_detail ? `<div class="muted detail-line">failure=${item.failure_detail}</div>` : ""}
+        <pre class="command-preview">${item.command_preview || "No command line reported."}</pre>
+      </li>
+    `,
+    "No slow action execution records.",
   );
 
   createListItems(
@@ -457,6 +707,11 @@ function renderAnalysis(payload, browserInsights) {
 function resetReviewPanels(message = "No uploaded reviews yet.") {
   summaryGrid.innerHTML = "";
   keywordList.innerHTML = `<li class="muted">${message}</li>`;
+  hostJvmArgsList.innerHTML = `<li class="muted">${message}</li>`;
+  jvmMetricsList.innerHTML = `<li class="muted">${message}</li>`;
+  timingMetricsList.innerHTML = `<li class="muted">${message}</li>`;
+  networkMetricsList.innerHTML = `<li class="muted">${message}</li>`;
+  workerStatsList.innerHTML = `<li class="muted">${message}</li>`;
   findingsList.innerHTML = `<li class="muted">${message}</li>`;
   failedTargetsList.innerHTML = `<li class="muted">${message}</li>`;
   cacheOverviewList.innerHTML = `<li class="muted">${message}</li>`;
@@ -464,6 +719,7 @@ function resetReviewPanels(message = "No uploaded reviews yet.") {
   flakyTestsList.innerHTML = `<li class="muted">${message}</li>`;
   compileTopList.innerHTML = `<li class="muted">${message}</li>`;
   ioTopList.innerHTML = `<li class="muted">${message}</li>`;
+  slowActionsList.innerHTML = `<li class="muted">${message}</li>`;
   slowTestsList.innerHTML = `<li class="muted">${message}</li>`;
   actionsList.innerHTML = `<li class="muted">${message}</li>`;
   runnerCountsList.innerHTML = `<li class="muted">${message}</li>`;
@@ -576,6 +832,7 @@ async function fetchReviews(updateStatus = true) {
 
 async function boot() {
   renderSetupSnippets();
+  syncSetupVisibility();
   resetReviewPanels();
 
   try {
@@ -636,6 +893,12 @@ copyBazelConfigBtn.addEventListener("click", async () => {
   await copyBazelConfig();
 });
 
+for (const button of tabButtons) {
+  button.addEventListener("click", () => {
+    setActiveTab(button.dataset.tab || "summary");
+  });
+}
+
 historyList.addEventListener("click", async (event) => {
   const item = event.target.closest("[data-review-id]");
   if (!item) return;
@@ -651,3 +914,4 @@ historyList.addEventListener("click", async (event) => {
 });
 
 boot();
+setActiveTab(activeTab);

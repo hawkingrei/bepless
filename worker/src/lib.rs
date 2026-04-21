@@ -537,7 +537,6 @@ async fn ingest_request(req: &mut Request, env: &worker::Env) -> Result<Response
 
 async fn list_reviews(env: &worker::Env) -> Result<Response> {
     let db = open_database(env)?;
-    ensure_schema(&db).await?;
 
     let result = db
         .prepare(
@@ -589,7 +588,6 @@ async fn get_review(env: &worker::Env, path: &str) -> Result<Response> {
         .map_err(|_| worker::Error::RustError("Review id must be an integer".into()))?;
 
     let db = open_database(env)?;
-    ensure_schema(&db).await?;
 
     let statement = db
         .prepare(
@@ -742,28 +740,6 @@ fn is_review_entry_path(path: &str) -> bool {
     !trimmed.is_empty() && !trimmed.contains('/')
 }
 
-async fn ensure_schema(db: &D1Database) -> Result<()> {
-    db.exec(
-        "CREATE TABLE IF NOT EXISTS reviews (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_type TEXT NOT NULL,
-            project_id TEXT,
-            build_id TEXT,
-            invocation_id TEXT,
-            notification_keywords_json TEXT NOT NULL DEFAULT '[]',
-            uploaded_at_ms INTEGER NOT NULL,
-            ingest_body TEXT NOT NULL,
-            analysis_json TEXT NOT NULL
-        )",
-    )
-    .await?;
-    db.exec("CREATE INDEX IF NOT EXISTS idx_reviews_uploaded_at ON reviews(uploaded_at_ms DESC, id DESC)")
-        .await?;
-    ensure_notification_keywords_column(db).await?;
-    log_info("ensure_schema_succeeded", vec![]);
-    Ok(())
-}
-
 async fn store_ingest_review(
     env: &worker::Env,
     raw_ingest_body: &str,
@@ -771,7 +747,6 @@ async fn store_ingest_review(
     analysis: &AnalysisResponse,
 ) -> Result<()> {
     let db = open_database(env)?;
-    ensure_schema(&db).await?;
 
     let metadata = extract_ingest_metadata(raw_ingest_body);
     let uploaded_at_ms = analysis
@@ -902,25 +877,6 @@ struct IngestMetadata {
     notification_keywords: Vec<String>,
 }
 
-async fn ensure_notification_keywords_column(db: &D1Database) -> Result<()> {
-    match db
-        .exec(
-            "ALTER TABLE reviews ADD COLUMN notification_keywords_json TEXT NOT NULL DEFAULT '[]';",
-        )
-        .await
-    {
-        Ok(_) => Ok(()),
-        Err(err) => {
-            let message = err.to_string();
-            if message.contains("duplicate column name") {
-                Ok(())
-            } else {
-                Err(err)
-            }
-        }
-    }
-}
-
 fn parse_keywords_json(input: &str) -> Result<Vec<String>> {
     serde_json::from_str(input).map_err(|err| {
         worker::Error::RustError(format!(
@@ -968,6 +924,9 @@ fn convert_proto_event_to_json(event: &build_event_stream::BuildEvent) -> Option
                     "stderr": progress.stderr,
                 }),
             );
+        }
+        build_event_stream::build_event::Payload::OptionsParsed(options) => {
+            object.insert("optionsParsed".to_string(), convert_options_parsed(options));
         }
         build_event_stream::build_event::Payload::Aborted(aborted) => {
             object.insert(
@@ -1018,6 +977,9 @@ fn convert_proto_event_to_json(event: &build_event_stream::BuildEvent) -> Option
         }
         build_event_stream::build_event::Payload::TestResult(test_result) => {
             object.insert("testResult".to_string(), convert_test_result(test_result));
+        }
+        build_event_stream::build_event::Payload::Action(action) => {
+            object.insert("action".to_string(), convert_action_executed(action));
         }
         build_event_stream::build_event::Payload::TestSummary(test_summary) => {
             object.insert(
@@ -1075,6 +1037,15 @@ fn convert_event_id(id: Option<&build_event_stream::BuildEventId>) -> Option<Val
                 }
             }
         }),
+        build_event_stream::build_event_id::Id::ActionCompleted(action) => json!({
+            "actionCompleted": {
+                "label": action.label,
+                "primaryOutput": action.primary_output,
+                "configuration": {
+                    "id": action.configuration.as_ref().map(|cfg| cfg.id.clone()).unwrap_or_default()
+                }
+            }
+        }),
         build_event_stream::build_event_id::Id::TestSummary(test) => json!({
             "testSummary": {
                 "label": test.label,
@@ -1116,6 +1087,31 @@ fn convert_test_result(test_result: &build_event_stream::TestResult) -> Value {
     }
 
     Value::Object(object)
+}
+
+fn convert_options_parsed(options: &build_event_stream::OptionsParsed) -> Value {
+    json!({
+        "startupOptions": options.startup_options,
+        "explicitStartupOptions": options.explicit_startup_options,
+        "cmdLine": options.cmd_line,
+        "explicitCmdLine": options.explicit_cmd_line,
+        "toolTag": options.tool_tag,
+    })
+}
+
+fn convert_action_executed(action: &build_event_stream::ActionExecuted) -> Value {
+    json!({
+        "success": action.success,
+        "type": action.r#type,
+        "exitCode": action.exit_code,
+        "primaryOutput": action.primary_output.as_ref().map(|file| file.name.clone()).unwrap_or_default(),
+        "stdout": action.stdout.as_ref().map(|file| file.name.clone()).unwrap_or_default(),
+        "stderr": action.stderr.as_ref().map(|file| file.name.clone()).unwrap_or_default(),
+        "commandLine": action.command_line,
+        "startTimeMillis": proto_timestamp_to_millis(action.start_time.as_ref()).map(|value| value.to_string()),
+        "endTimeMillis": proto_timestamp_to_millis(action.end_time.as_ref()).map(|value| value.to_string()),
+        "failureDetail": action.failure_detail.as_ref().map(|detail| detail.message.clone()),
+    })
 }
 
 fn convert_execution_info(
@@ -1182,6 +1178,57 @@ fn convert_build_metrics(metrics: &build_event_stream::BuildMetrics) -> Value {
             }),
         );
     }
+    if let Some(memory_metrics) = metrics.memory_metrics.as_ref() {
+        object.insert(
+            "memoryMetrics".to_string(),
+            json!({
+                "usedHeapSizePostBuild": memory_metrics.used_heap_size_post_build.to_string(),
+                "peakPostGcHeapSize": memory_metrics.peak_post_gc_heap_size.to_string(),
+                "peakPostGcTenuredSpaceHeapSize": memory_metrics.peak_post_gc_tenured_space_heap_size.to_string(),
+                "garbageMetrics": memory_metrics.garbage_metrics.iter().map(|metric| json!({
+                    "type": metric.r#type,
+                    "garbageCollected": metric.garbage_collected.to_string(),
+                })).collect::<Vec<_>>(),
+            }),
+        );
+    }
+    if let Some(network_metrics) = metrics.network_metrics.as_ref() {
+        object.insert(
+            "networkMetrics".to_string(),
+            json!({
+                "systemNetworkStats": network_metrics.system_network_stats.as_ref().map(|stats| json!({
+                    "bytesSent": stats.bytes_sent.to_string(),
+                    "bytesRecv": stats.bytes_recv.to_string(),
+                    "packetsSent": stats.packets_sent.to_string(),
+                    "packetsRecv": stats.packets_recv.to_string(),
+                    "peakBytesSentPerSec": stats.peak_bytes_sent_per_sec.to_string(),
+                    "peakBytesRecvPerSec": stats.peak_bytes_recv_per_sec.to_string(),
+                    "peakPacketsSentPerSec": stats.peak_packets_sent_per_sec.to_string(),
+                    "peakPacketsRecvPerSec": stats.peak_packets_recv_per_sec.to_string(),
+                })).unwrap_or_else(|| json!({})),
+            }),
+        );
+    }
+    object.insert(
+        "workerMetrics".to_string(),
+        Value::Array(metrics.worker_metrics.iter().map(|metric| json!({
+            "mnemonic": metric.mnemonic,
+            "isMultiplex": metric.is_multiplex,
+            "isSandbox": metric.is_sandbox,
+            "actionsExecuted": metric.actions_executed.to_string(),
+            "priorActionsExecuted": metric.prior_actions_executed.to_string(),
+            "workerStatus": build_event_stream::build_metrics::worker_metrics::WorkerStatus::try_from(metric.worker_status)
+                .ok()
+                .map(|status| status.as_str_name())
+                .unwrap_or("UNKNOWN"),
+            "workerStats": metric.worker_stats.iter().map(|stats| json!({
+                "collectTimeInMs": stats.collect_time_in_ms.to_string(),
+                "workerMemoryInKb": stats.worker_memory_in_kb,
+                "priorWorkerMemoryInKb": stats.prior_worker_memory_in_kb,
+                "lastActionStartTimeInMs": stats.last_action_start_time_in_ms.to_string(),
+            })).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>()),
+    );
 
     Value::Object(object)
 }
@@ -1206,8 +1253,8 @@ fn convert_action_summary(
             "actionsExecuted": data.actions_executed.to_string(),
             "firstStartedMs": data.first_started_ms.to_string(),
             "lastEndedMs": data.last_ended_ms.to_string(),
-            "systemTime": proto_duration_to_seconds_text(data.system_time.as_ref()).unwrap_or_else(|| "0s".to_string()),
-            "userTime": proto_duration_to_seconds_text(data.user_time.as_ref()).unwrap_or_else(|| "0s".to_string()),
+            "systemTime": proto_duration_to_seconds_text(data.system_time.as_ref()),
+            "userTime": proto_duration_to_seconds_text(data.user_time.as_ref()),
         })).collect::<Vec<_>>(),
     })
 }
