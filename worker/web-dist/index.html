@@ -280,6 +280,15 @@ li {
   background: rgba(255, 255, 255, 0.64);
 }
 
+.clickable-row {
+  cursor: pointer;
+}
+
+.clickable-row-active {
+  border-color: rgba(11, 110, 79, 0.4);
+  background: rgba(11, 110, 79, 0.08);
+}
+
 .finding-high {
   background: var(--danger-soft);
   border-color: rgba(153, 27, 27, 0.22);
@@ -581,6 +590,12 @@ li {
                   </ul>
                 </section>
                 <section class="panel">
+                  <h3>Flaky Attempts</h3>
+                  <ul id="flaky-attempts-list">
+                    <li class="muted">Select a flaky test.</li>
+                  </ul>
+                </section>
+                <section class="panel">
                   <h3>Top Compile Time</h3>
                   <ul id="compile-top-list">
                     <li class="muted">No uploaded reviews yet.</li>
@@ -589,6 +604,12 @@ li {
                 <section class="panel">
                   <h3>Top IO Time</h3>
                   <ul id="io-top-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel">
+                  <h3>Top Test Execution Wall Time</h3>
+                  <ul id="test-exec-wall-top-list">
                     <li class="muted">No uploaded reviews yet.</li>
                   </ul>
                 </section>
@@ -684,8 +705,10 @@ li {
   var cacheOverviewList = document.getElementById("cache-overview-list");
   var cacheMissReasonsList = document.getElementById("cache-miss-reasons-list");
   var flakyTestsList = document.getElementById("flaky-tests-list");
+  var flakyAttemptsList = document.getElementById("flaky-attempts-list");
   var compileTopList = document.getElementById("compile-top-list");
   var ioTopList = document.getElementById("io-top-list");
+  var testExecWallTopList = document.getElementById("test-exec-wall-top-list");
   var slowActionsList = document.getElementById("slow-actions-list");
   var slowTestsList = document.getElementById("slow-tests-list");
   var actionsList = document.getElementById("actions-list");
@@ -693,6 +716,8 @@ li {
   var timingBreakdownList = document.getElementById("timing-breakdown-list");
   var currentReviewId = null;
   var activeTab = "summary";
+  var activeFlakyLabel = null;
+  window.__lastBrowserInsights = null;
   function currentInvocationPath() {
     const trimmed = window.location.pathname.replace(/^\/+|\/+$/g, "");
     return trimmed || null;
@@ -802,6 +827,24 @@ li {
     }
     return total;
   }
+  function timingBreakdownTotalMs(node) {
+    if (!node || typeof node !== "object") return null;
+    const explicit = parseDurationMs(node.time);
+    if (explicit !== null) return explicit;
+    if (Array.isArray(node.child) && node.child.length > 0) {
+      let total = 0;
+      let hasChild = false;
+      for (const child of node.child) {
+        const childMs = timingBreakdownTotalMs(child);
+        if (childMs !== null) {
+          total += childMs;
+          hasChild = true;
+        }
+      }
+      return hasChild ? total : null;
+    }
+    return null;
+  }
   function isFlakyTest(test) {
     if (!test) return false;
     if (test.status === "FLAKY") return true;
@@ -812,9 +855,11 @@ li {
   function summarizeBrowserInsights(input) {
     const compileItems = [];
     const ioItems = [];
+    const testExecutionWallItems = [];
     const slowActions = [];
     const tests = [];
     const flakyTests = [];
+    const flakyAttemptsByLabel = /* @__PURE__ */ new Map();
     const cacheMissReasons = /* @__PURE__ */ new Map();
     const hostJvmArgs = /* @__PURE__ */ new Set();
     let cacheOverview = null;
@@ -951,18 +996,41 @@ li {
         }
       }
       if (event.id && event.id.testResult && event.testResult && event.testResult.executionInfo) {
+        const testId = event.id.testResult;
         const testResult = event.testResult;
-        const ioMs = sumIOTimingMs(testResult.executionInfo.timingBreakdown);
+        const timingBreakdown = testResult.executionInfo.timingBreakdown;
+        const ioMs = sumIOTimingMs(timingBreakdown);
+        const executionWallMs = timingBreakdownTotalMs(timingBreakdown);
+        const label = testId.label || "<unknown>";
         ioItems.push({
-          name: event.id.testResult.label || "<unknown>",
+          name: label,
           duration_ms: ioMs,
           strategy: testResult.executionInfo.strategy || "n/a",
           status: testResult.status || "UNKNOWN"
         });
+        testExecutionWallItems.push({
+          name: label,
+          duration_ms: executionWallMs,
+          strategy: testResult.executionInfo.strategy || "n/a",
+          status: testResult.status || "UNKNOWN"
+        });
+        const attempts = flakyAttemptsByLabel.get(label) || [];
+        attempts.push({
+          label,
+          run: toNumber(testId.run),
+          shard: toNumber(testId.shard),
+          attempt: toNumber(testId.attempt),
+          status: testResult.status || "UNKNOWN",
+          strategy: testResult.executionInfo.strategy || "n/a",
+          execution_wall_ms: executionWallMs,
+          io_ms: ioMs
+        });
+        flakyAttemptsByLabel.set(label, attempts);
       }
     }
     compileItems.sort((left, right) => right.duration_ms - left.duration_ms);
     ioItems.sort((left, right) => right.duration_ms - left.duration_ms);
+    testExecutionWallItems.sort((left, right) => (right.duration_ms ?? -1) - (left.duration_ms ?? -1));
     slowActions.sort((left, right) => (right.duration_ms ?? -1) - (left.duration_ms ?? -1));
     tests.sort((left, right) => right.duration_ms - left.duration_ms);
     flakyTests.sort((left, right) => right.duration_ms - left.duration_ms);
@@ -976,9 +1044,11 @@ li {
       cacheMissReasons: Array.from(cacheMissReasons.entries()).sort((left, right) => right[1] - left[1]),
       topCompileItems: compileItems.slice(0, 10),
       topIoItems: ioItems.filter((item) => item.duration_ms > 0).slice(0, 10),
+      topTestExecutionWallItems: testExecutionWallItems.filter((item) => item.duration_ms !== null).slice(0, 10),
       slowActions: slowActions.filter((item) => item.duration_ms !== null).slice(0, 10),
       topTests: tests.slice(0, 10),
-      flakyTests: flakyTests.slice(0, 10)
+      flakyTests: flakyTests.slice(0, 10),
+      flakyAttemptsByLabel
     };
   }
   function createListItems(container, items, render, emptyText) {
@@ -1020,6 +1090,13 @@ li {
     ).join("");
   }
   function renderBrowserInsights(insights) {
+    window.__lastBrowserInsights = insights;
+    if (activeFlakyLabel && (!insights.flakyAttemptsByLabel || !insights.flakyAttemptsByLabel.has(activeFlakyLabel))) {
+      activeFlakyLabel = null;
+    }
+    if (!activeFlakyLabel && insights.flakyTests.length > 0) {
+      activeFlakyLabel = insights.flakyTests[0].label;
+    }
     createListItems(
       hostJvmArgsList,
       insights.hostJvmArgs,
@@ -1168,6 +1245,22 @@ li {
       "No IO timing breakdown found."
     );
     createListItems(
+      testExecWallTopList,
+      insights.topTestExecutionWallItems,
+      (item) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${item.name}</strong>
+          <span class="badge">${formatMs(item.duration_ms)}</span>
+        </div>
+        <div class="muted detail-line">
+          strategy=${item.strategy} status=${item.status}
+        </div>
+      </li>
+    `,
+      "No test execution wall-time data."
+    );
+    createListItems(
       slowActionsList,
       insights.slowActions,
       (item) => `
@@ -1192,7 +1285,7 @@ li {
       flakyTestsList,
       insights.flakyTests,
       (item) => `
-      <li>
+      <li class="clickable-row ${activeFlakyLabel === item.label ? "clickable-row-active" : ""}" data-flaky-label="${escapeHtml(item.label)}">
         <div class="split-line">
           <strong class="mono">${item.label}</strong>
           <span class="badge">${formatMs(item.duration_ms)}</span>
@@ -1204,6 +1297,7 @@ li {
     `,
       "No flaky test signal found."
     );
+    renderFlakyAttempts(insights, activeFlakyLabel);
     createListItems(
       slowTestsList,
       insights.topTests,
@@ -1220,6 +1314,32 @@ li {
     `,
       "No test summaries."
     );
+  }
+  function renderFlakyAttempts(insights, label) {
+    const attempts = label ? insights.flakyAttemptsByLabel.get(label) || [] : [];
+    createListItems(
+      flakyAttemptsList,
+      attempts.slice().sort((left, right) => {
+        if ((left.run ?? -1) !== (right.run ?? -1)) return (left.run ?? -1) - (right.run ?? -1);
+        if ((left.shard ?? -1) !== (right.shard ?? -1)) return (left.shard ?? -1) - (right.shard ?? -1);
+        return (left.attempt ?? -1) - (right.attempt ?? -1);
+      }),
+      (item) => `
+      <li>
+        <div class="split-line">
+          <strong>run=${item.run ?? "n/a"} shard=${item.shard ?? "n/a"} attempt=${item.attempt ?? "n/a"}</strong>
+          <span class="badge">${item.status}</span>
+        </div>
+        <div class="muted detail-line">
+          strategy=${item.strategy} wall=${formatMs(item.execution_wall_ms)} io=${formatMs(item.io_ms)}
+        </div>
+      </li>
+    `,
+      label ? "No test attempts recorded." : "Select a flaky test."
+    );
+  }
+  function escapeHtml(value) {
+    return String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   }
   function renderAnalysis(payload, browserInsights) {
     renderSummary(payload.summary);
@@ -1287,6 +1407,8 @@ li {
     );
   }
   function resetReviewPanels(message = "No uploaded reviews yet.") {
+    window.__lastBrowserInsights = null;
+    activeFlakyLabel = null;
     summaryGrid.innerHTML = "";
     keywordList.innerHTML = `<li class="muted">${message}</li>`;
     hostJvmArgsList.innerHTML = `<li class="muted">${message}</li>`;
@@ -1299,8 +1421,10 @@ li {
     cacheOverviewList.innerHTML = `<li class="muted">${message}</li>`;
     cacheMissReasonsList.innerHTML = `<li class="muted">${message}</li>`;
     flakyTestsList.innerHTML = `<li class="muted">${message}</li>`;
+    flakyAttemptsList.innerHTML = `<li class="muted">${message}</li>`;
     compileTopList.innerHTML = `<li class="muted">${message}</li>`;
     ioTopList.innerHTML = `<li class="muted">${message}</li>`;
+    testExecWallTopList.innerHTML = `<li class="muted">${message}</li>`;
     slowActionsList.innerHTML = `<li class="muted">${message}</li>`;
     slowTestsList.innerHTML = `<li class="muted">${message}</li>`;
     actionsList.innerHTML = `<li class="muted">${message}</li>`;
@@ -1459,6 +1583,18 @@ li {
       await loadReview(reviewId);
     } catch (error) {
       console.error(error);
+    }
+  });
+  flakyTestsList.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-flaky-label]");
+    if (!item) return;
+    activeFlakyLabel = item.dataset.flakyLabel || null;
+    const reviewPanel = document.querySelector('[data-tab-panel="hotspots"]');
+    if (!reviewPanel || reviewPanel.classList.contains("hidden")) {
+      setActiveTab("hotspots");
+    }
+    if (window.__lastBrowserInsights) {
+      renderFlakyAttempts(window.__lastBrowserInsights, activeFlakyLabel);
     }
   });
   boot();

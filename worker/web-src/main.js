@@ -21,8 +21,10 @@ const failedTargetsList = document.getElementById("failed-targets-list");
 const cacheOverviewList = document.getElementById("cache-overview-list");
 const cacheMissReasonsList = document.getElementById("cache-miss-reasons-list");
 const flakyTestsList = document.getElementById("flaky-tests-list");
+const flakyAttemptsList = document.getElementById("flaky-attempts-list");
 const compileTopList = document.getElementById("compile-top-list");
 const ioTopList = document.getElementById("io-top-list");
+const testExecWallTopList = document.getElementById("test-exec-wall-top-list");
 const slowActionsList = document.getElementById("slow-actions-list");
 const slowTestsList = document.getElementById("slow-tests-list");
 const actionsList = document.getElementById("actions-list");
@@ -31,6 +33,8 @@ const timingBreakdownList = document.getElementById("timing-breakdown-list");
 
 let currentReviewId = null;
 let activeTab = "summary";
+let activeFlakyLabel = null;
+window.__lastBrowserInsights = null;
 
 function currentInvocationPath() {
   const trimmed = window.location.pathname.replace(/^\/+|\/+$/g, "");
@@ -161,6 +165,27 @@ function sumIOTimingMs(node) {
   return total;
 }
 
+function timingBreakdownTotalMs(node) {
+  if (!node || typeof node !== "object") return null;
+  const explicit = parseDurationMs(node.time);
+  if (explicit !== null) return explicit;
+
+  if (Array.isArray(node.child) && node.child.length > 0) {
+    let total = 0;
+    let hasChild = false;
+    for (const child of node.child) {
+      const childMs = timingBreakdownTotalMs(child);
+      if (childMs !== null) {
+        total += childMs;
+        hasChild = true;
+      }
+    }
+    return hasChild ? total : null;
+  }
+
+  return null;
+}
+
 function isFlakyTest(test) {
   if (!test) return false;
   if (test.status === "FLAKY") return true;
@@ -172,9 +197,11 @@ function isFlakyTest(test) {
 function summarizeBrowserInsights(input) {
   const compileItems = [];
   const ioItems = [];
+  const testExecutionWallItems = [];
   const slowActions = [];
   const tests = [];
   const flakyTests = [];
+  const flakyAttemptsByLabel = new Map();
   const cacheMissReasons = new Map();
   const hostJvmArgs = new Set();
   let cacheOverview = null;
@@ -337,19 +364,42 @@ function summarizeBrowserInsights(input) {
     }
 
     if (event.id && event.id.testResult && event.testResult && event.testResult.executionInfo) {
+      const testId = event.id.testResult;
       const testResult = event.testResult;
-      const ioMs = sumIOTimingMs(testResult.executionInfo.timingBreakdown);
+      const timingBreakdown = testResult.executionInfo.timingBreakdown;
+      const ioMs = sumIOTimingMs(timingBreakdown);
+      const executionWallMs = timingBreakdownTotalMs(timingBreakdown);
+      const label = testId.label || "<unknown>";
       ioItems.push({
-        name: event.id.testResult.label || "<unknown>",
+        name: label,
         duration_ms: ioMs,
         strategy: testResult.executionInfo.strategy || "n/a",
         status: testResult.status || "UNKNOWN",
       });
+      testExecutionWallItems.push({
+        name: label,
+        duration_ms: executionWallMs,
+        strategy: testResult.executionInfo.strategy || "n/a",
+        status: testResult.status || "UNKNOWN",
+      });
+      const attempts = flakyAttemptsByLabel.get(label) || [];
+      attempts.push({
+        label,
+        run: toNumber(testId.run),
+        shard: toNumber(testId.shard),
+        attempt: toNumber(testId.attempt),
+        status: testResult.status || "UNKNOWN",
+        strategy: testResult.executionInfo.strategy || "n/a",
+        execution_wall_ms: executionWallMs,
+        io_ms: ioMs,
+      });
+      flakyAttemptsByLabel.set(label, attempts);
     }
   }
 
   compileItems.sort((left, right) => right.duration_ms - left.duration_ms);
   ioItems.sort((left, right) => right.duration_ms - left.duration_ms);
+  testExecutionWallItems.sort((left, right) => (right.duration_ms ?? -1) - (left.duration_ms ?? -1));
   slowActions.sort((left, right) => (right.duration_ms ?? -1) - (left.duration_ms ?? -1));
   tests.sort((left, right) => right.duration_ms - left.duration_ms);
   flakyTests.sort((left, right) => right.duration_ms - left.duration_ms);
@@ -366,9 +416,11 @@ function summarizeBrowserInsights(input) {
     cacheMissReasons: Array.from(cacheMissReasons.entries()).sort((left, right) => right[1] - left[1]),
     topCompileItems: compileItems.slice(0, 10),
     topIoItems: ioItems.filter((item) => item.duration_ms > 0).slice(0, 10),
+    topTestExecutionWallItems: testExecutionWallItems.filter((item) => item.duration_ms !== null).slice(0, 10),
     slowActions: slowActions.filter((item) => item.duration_ms !== null).slice(0, 10),
     topTests: tests.slice(0, 10),
     flakyTests: flakyTests.slice(0, 10),
+    flakyAttemptsByLabel,
   };
 }
 
@@ -419,6 +471,17 @@ function renderKeywords(keywords) {
 }
 
 function renderBrowserInsights(insights) {
+  window.__lastBrowserInsights = insights;
+  if (
+    activeFlakyLabel &&
+    (!insights.flakyAttemptsByLabel || !insights.flakyAttemptsByLabel.has(activeFlakyLabel))
+  ) {
+    activeFlakyLabel = null;
+  }
+  if (!activeFlakyLabel && insights.flakyTests.length > 0) {
+    activeFlakyLabel = insights.flakyTests[0].label;
+  }
+
   createListItems(
     hostJvmArgsList,
     insights.hostJvmArgs,
@@ -577,6 +640,23 @@ function renderBrowserInsights(insights) {
   );
 
   createListItems(
+    testExecWallTopList,
+    insights.topTestExecutionWallItems,
+    (item) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${item.name}</strong>
+          <span class="badge">${formatMs(item.duration_ms)}</span>
+        </div>
+        <div class="muted detail-line">
+          strategy=${item.strategy} status=${item.status}
+        </div>
+      </li>
+    `,
+    "No test execution wall-time data.",
+  );
+
+  createListItems(
     slowActionsList,
     insights.slowActions,
     (item) => `
@@ -602,7 +682,7 @@ function renderBrowserInsights(insights) {
     flakyTestsList,
     insights.flakyTests,
     (item) => `
-      <li>
+      <li class="clickable-row ${activeFlakyLabel === item.label ? "clickable-row-active" : ""}" data-flaky-label="${escapeHtml(item.label)}">
         <div class="split-line">
           <strong class="mono">${item.label}</strong>
           <span class="badge">${formatMs(item.duration_ms)}</span>
@@ -614,6 +694,8 @@ function renderBrowserInsights(insights) {
     `,
     "No flaky test signal found.",
   );
+
+  renderFlakyAttempts(insights, activeFlakyLabel);
 
   createListItems(
     slowTestsList,
@@ -631,6 +713,40 @@ function renderBrowserInsights(insights) {
     `,
     "No test summaries.",
   );
+}
+
+function renderFlakyAttempts(insights, label) {
+  const attempts = label ? insights.flakyAttemptsByLabel.get(label) || [] : [];
+  createListItems(
+    flakyAttemptsList,
+    attempts
+      .slice()
+      .sort((left, right) => {
+        if ((left.run ?? -1) !== (right.run ?? -1)) return (left.run ?? -1) - (right.run ?? -1);
+        if ((left.shard ?? -1) !== (right.shard ?? -1)) return (left.shard ?? -1) - (right.shard ?? -1);
+        return (left.attempt ?? -1) - (right.attempt ?? -1);
+      }),
+    (item) => `
+      <li>
+        <div class="split-line">
+          <strong>run=${item.run ?? "n/a"} shard=${item.shard ?? "n/a"} attempt=${item.attempt ?? "n/a"}</strong>
+          <span class="badge">${item.status}</span>
+        </div>
+        <div class="muted detail-line">
+          strategy=${item.strategy} wall=${formatMs(item.execution_wall_ms)} io=${formatMs(item.io_ms)}
+        </div>
+      </li>
+    `,
+    label ? "No test attempts recorded." : "Select a flaky test.",
+  );
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 function renderAnalysis(payload, browserInsights) {
@@ -705,6 +821,8 @@ function renderAnalysis(payload, browserInsights) {
 }
 
 function resetReviewPanels(message = "No uploaded reviews yet.") {
+  window.__lastBrowserInsights = null;
+  activeFlakyLabel = null;
   summaryGrid.innerHTML = "";
   keywordList.innerHTML = `<li class="muted">${message}</li>`;
   hostJvmArgsList.innerHTML = `<li class="muted">${message}</li>`;
@@ -717,8 +835,10 @@ function resetReviewPanels(message = "No uploaded reviews yet.") {
   cacheOverviewList.innerHTML = `<li class="muted">${message}</li>`;
   cacheMissReasonsList.innerHTML = `<li class="muted">${message}</li>`;
   flakyTestsList.innerHTML = `<li class="muted">${message}</li>`;
+  flakyAttemptsList.innerHTML = `<li class="muted">${message}</li>`;
   compileTopList.innerHTML = `<li class="muted">${message}</li>`;
   ioTopList.innerHTML = `<li class="muted">${message}</li>`;
+  testExecWallTopList.innerHTML = `<li class="muted">${message}</li>`;
   slowActionsList.innerHTML = `<li class="muted">${message}</li>`;
   slowTestsList.innerHTML = `<li class="muted">${message}</li>`;
   actionsList.innerHTML = `<li class="muted">${message}</li>`;
@@ -910,6 +1030,19 @@ historyList.addEventListener("click", async (event) => {
     await loadReview(reviewId);
   } catch (error) {
     console.error(error);
+  }
+});
+
+flakyTestsList.addEventListener("click", (event) => {
+  const item = event.target.closest("[data-flaky-label]");
+  if (!item) return;
+  activeFlakyLabel = item.dataset.flakyLabel || null;
+  const reviewPanel = document.querySelector('[data-tab-panel="hotspots"]');
+  if (!reviewPanel || reviewPanel.classList.contains("hidden")) {
+    setActiveTab("hotspots");
+  }
+  if (window.__lastBrowserInsights) {
+    renderFlakyAttempts(window.__lastBrowserInsights, activeFlakyLabel);
   }
 });
 

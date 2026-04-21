@@ -273,6 +273,15 @@ li {
   background: rgba(255, 255, 255, 0.64);
 }
 
+.clickable-row {
+  cursor: pointer;
+}
+
+.clickable-row-active {
+  border-color: rgba(11, 110, 79, 0.4);
+  background: rgba(11, 110, 79, 0.08);
+}
+
 .finding-high {
   background: var(--danger-soft);
   border-color: rgba(153, 27, 27, 0.22);
