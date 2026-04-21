@@ -61,6 +61,8 @@ struct IngestEnvelope {
     invocation_id: String,
     #[allow(dead_code)]
     sequence_number: i64,
+    #[serde(default)]
+    notification_keywords: Vec<String>,
     bazel_event_proto_base64: String,
 }
 
@@ -135,6 +137,7 @@ struct StoredReviewListItem {
     project_id: Option<String>,
     build_id: Option<String>,
     invocation_id: Option<String>,
+    notification_keywords: Vec<String>,
     uploaded_at_ms: i64,
     summary: Summary,
 }
@@ -146,6 +149,7 @@ struct StoredReviewDetail {
     project_id: Option<String>,
     build_id: Option<String>,
     invocation_id: Option<String>,
+    notification_keywords: Vec<String>,
     uploaded_at_ms: i64,
     analysis: AnalysisResponse,
     ingest_body: String,
@@ -158,6 +162,7 @@ struct StoredReviewRow {
     project_id: Option<String>,
     build_id: Option<String>,
     invocation_id: Option<String>,
+    notification_keywords_json: String,
     uploaded_at_ms: i64,
     analysis_json: String,
     ingest_body: String,
@@ -504,7 +509,7 @@ async fn list_reviews(env: &worker::Env) -> Result<Response> {
 
     let result = db
         .prepare(
-            "SELECT id, source_type, project_id, build_id, invocation_id, uploaded_at_ms, analysis_json, ingest_body
+            "SELECT id, source_type, project_id, build_id, invocation_id, notification_keywords_json, uploaded_at_ms, analysis_json, ingest_body
              FROM reviews
              ORDER BY uploaded_at_ms DESC, id DESC
              LIMIT 50",
@@ -528,6 +533,7 @@ async fn list_reviews(env: &worker::Env) -> Result<Response> {
             project_id: row.project_id,
             build_id: row.build_id,
             invocation_id: row.invocation_id,
+            notification_keywords: parse_keywords_json(&row.notification_keywords_json)?,
             uploaded_at_ms: row.uploaded_at_ms,
             summary: analysis.summary,
         });
@@ -551,7 +557,7 @@ async fn get_review(env: &worker::Env, path: &str) -> Result<Response> {
 
     let statement = db
         .prepare(
-            "SELECT id, source_type, project_id, build_id, invocation_id, uploaded_at_ms, analysis_json, ingest_body
+            "SELECT id, source_type, project_id, build_id, invocation_id, notification_keywords_json, uploaded_at_ms, analysis_json, ingest_body
              FROM reviews
              WHERE id = ?1
              LIMIT 1",
@@ -574,6 +580,7 @@ async fn get_review(env: &worker::Env, path: &str) -> Result<Response> {
         project_id: row.project_id,
         build_id: row.build_id,
         invocation_id: row.invocation_id,
+        notification_keywords: parse_keywords_json(&row.notification_keywords_json)?,
         uploaded_at_ms: row.uploaded_at_ms,
         analysis,
         ingest_body: row.ingest_body,
@@ -694,6 +701,7 @@ async fn ensure_schema(db: &D1Database) -> Result<()> {
             project_id TEXT,
             build_id TEXT,
             invocation_id TEXT,
+            notification_keywords_json TEXT NOT NULL DEFAULT '[]',
             uploaded_at_ms INTEGER NOT NULL,
             ingest_body TEXT NOT NULL,
             analysis_json TEXT NOT NULL
@@ -702,6 +710,7 @@ async fn ensure_schema(db: &D1Database) -> Result<()> {
         "#,
     )
     .await?;
+    ensure_notification_keywords_column(db).await?;
     Ok(())
 }
 
@@ -724,6 +733,10 @@ async fn store_ingest_review(
     let analysis_json = serde_json::to_string(analysis).map_err(|err| {
         worker::Error::RustError(format!("Failed to serialize analysis payload: {}", err))
     })?;
+    let notification_keywords_json =
+        serde_json::to_string(&metadata.notification_keywords).map_err(|err| {
+            worker::Error::RustError(format!("Failed to serialize notification keywords: {}", err))
+        })?;
 
     db.prepare(
         "INSERT INTO reviews (
@@ -731,10 +744,11 @@ async fn store_ingest_review(
             project_id,
             build_id,
             invocation_id,
+            notification_keywords_json,
             uploaded_at_ms,
             ingest_body,
             analysis_json
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )
     .bind(&[
         JsValue::from_str("ingest"),
@@ -753,6 +767,7 @@ async fn store_ingest_review(
             .as_deref()
             .map(JsValue::from_str)
             .unwrap_or_else(JsValue::null),
+        JsValue::from_str(&notification_keywords_json),
         JsValue::from_f64(uploaded_at_ms as f64),
         JsValue::from_str(normalized_ingest_body),
         JsValue::from_str(&analysis_json),
@@ -787,6 +802,7 @@ fn extract_ingest_metadata(input: &str) -> IngestMetadata {
                 project_id: non_empty_string(envelope.project_id),
                 build_id: non_empty_string(envelope.build_id),
                 invocation_id: non_empty_string(envelope.invocation_id),
+                notification_keywords: envelope.notification_keywords,
             };
         }
     }
@@ -799,6 +815,35 @@ struct IngestMetadata {
     project_id: Option<String>,
     build_id: Option<String>,
     invocation_id: Option<String>,
+    notification_keywords: Vec<String>,
+}
+
+async fn ensure_notification_keywords_column(db: &D1Database) -> Result<()> {
+    match db
+        .exec(
+            "ALTER TABLE reviews ADD COLUMN notification_keywords_json TEXT NOT NULL DEFAULT '[]';",
+        )
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            let message = err.to_string();
+            if message.contains("duplicate column name") {
+                Ok(())
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
+fn parse_keywords_json(input: &str) -> Result<Vec<String>> {
+    serde_json::from_str(input).map_err(|err| {
+        worker::Error::RustError(format!(
+            "Stored review has invalid notification keywords JSON: {}",
+            err
+        ))
+    })
 }
 
 #[allow(deprecated)]

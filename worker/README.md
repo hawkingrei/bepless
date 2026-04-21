@@ -58,12 +58,14 @@ database_id = "<your-d1-database-id>"
 The canonical schema now lives in:
 
 - `migrations/0001_reviews.sql`
+- `migrations/0002_notification_keywords.sql`
 
 Initialize the remote database explicitly instead of relying on first-request table creation:
 
 ```bash
 cd worker
 npx wrangler d1 execute bepless --remote --file migrations/0001_reviews.sql
+npx wrangler d1 execute bepless --remote --file migrations/0002_notification_keywords.sql
 ```
 
 Quick verification:
@@ -72,6 +74,9 @@ Quick verification:
 cd worker
 npx wrangler d1 execute bepless --remote --command "SELECT name FROM sqlite_master WHERE type='table' AND name='reviews';"
 ```
+
+`grpc-ingest` now forwards BES `notification_keywords` from `--bes_keywords`, and the worker stores
+them in D1 so the review page can display them per invocation.
 
 ## Run
 

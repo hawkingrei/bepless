@@ -7,6 +7,7 @@ const copyBazelConfigStatus = document.getElementById("copy-bazel-config-status"
 const sinkConfig = document.getElementById("sink-config");
 
 const summaryGrid = document.getElementById("summary-grid");
+const keywordList = document.getElementById("keyword-list");
 const findingsList = document.getElementById("findings-list");
 const failedTargetsList = document.getElementById("failed-targets-list");
 const cacheOverviewList = document.getElementById("cache-overview-list");
@@ -262,6 +263,21 @@ function renderSummary(summary) {
     .join("");
 }
 
+function renderKeywords(keywords) {
+  if (!keywords || keywords.length === 0) {
+    keywordList.innerHTML = '<li class="muted">No notification keywords.</li>';
+    return;
+  }
+
+  keywordList.innerHTML = keywords
+    .map(
+      (keyword) => `
+        <li class="tag-chip mono">${keyword}</li>
+      `,
+    )
+    .join("");
+}
+
 function renderBrowserInsights(insights) {
   createListItems(
     cacheOverviewList,
@@ -369,6 +385,7 @@ function renderBrowserInsights(insights) {
 
 function renderAnalysis(payload, browserInsights) {
   renderSummary(payload.summary);
+  renderKeywords(payload.notification_keywords);
   renderBrowserInsights(browserInsights);
 
   createListItems(
@@ -439,6 +456,7 @@ function renderAnalysis(payload, browserInsights) {
 
 function resetReviewPanels(message = "No uploaded reviews yet.") {
   summaryGrid.innerHTML = "";
+  keywordList.innerHTML = `<li class="muted">${message}</li>`;
   findingsList.innerHTML = `<li class="muted">${message}</li>`;
   failedTargetsList.innerHTML = `<li class="muted">${message}</li>`;
   cacheOverviewList.innerHTML = `<li class="muted">${message}</li>`;

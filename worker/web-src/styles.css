@@ -294,6 +294,26 @@ li {
   margin-top: 8px;
 }
 
+.tag-block {
+  margin-top: 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tag-chip {
+  width: auto;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(11, 110, 79, 0.08);
+  border: 1px solid rgba(11, 110, 79, 0.16);
+}
+
 .setup-feedback {
   margin-top: 12px;
 }

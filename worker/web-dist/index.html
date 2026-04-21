@@ -301,6 +301,26 @@ li {
   margin-top: 8px;
 }
 
+.tag-block {
+  margin-top: 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tag-chip {
+  width: auto;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(11, 110, 79, 0.08);
+  border: 1px solid rgba(11, 110, 79, 0.16);
+}
+
 .setup-feedback {
   margin-top: 12px;
 }
@@ -426,6 +446,12 @@ li {
               </div>
               <section class="panel">
                 <div class="kpi-grid" id="summary-grid"></div>
+                <div class="tag-block">
+                  <h3>Notification Keywords</h3>
+                  <ul id="keyword-list" class="tag-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </div>
               </section>
             </section>
 
@@ -556,6 +582,7 @@ li {
   var copyBazelConfigStatus = document.getElementById("copy-bazel-config-status");
   var sinkConfig = document.getElementById("sink-config");
   var summaryGrid = document.getElementById("summary-grid");
+  var keywordList = document.getElementById("keyword-list");
   var findingsList = document.getElementById("findings-list");
   var failedTargetsList = document.getElementById("failed-targets-list");
   var cacheOverviewList = document.getElementById("cache-overview-list");
@@ -768,6 +795,17 @@ li {
       `
     ).join("");
   }
+  function renderKeywords(keywords) {
+    if (!keywords || keywords.length === 0) {
+      keywordList.innerHTML = '<li class="muted">No notification keywords.</li>';
+      return;
+    }
+    keywordList.innerHTML = keywords.map(
+      (keyword) => `
+        <li class="tag-chip mono">${keyword}</li>
+      `
+    ).join("");
+  }
   function renderBrowserInsights(insights) {
     createListItems(
       cacheOverviewList,
@@ -868,6 +906,7 @@ li {
   }
   function renderAnalysis(payload, browserInsights) {
     renderSummary(payload.summary);
+    renderKeywords(payload.notification_keywords);
     renderBrowserInsights(browserInsights);
     createListItems(
       findingsList,
@@ -932,6 +971,7 @@ li {
   }
   function resetReviewPanels(message = "No uploaded reviews yet.") {
     summaryGrid.innerHTML = "";
+    keywordList.innerHTML = `<li class="muted">${message}</li>`;
     findingsList.innerHTML = `<li class="muted">${message}</li>`;
     failedTargetsList.innerHTML = `<li class="muted">${message}</li>`;
     cacheOverviewList.innerHTML = `<li class="muted">${message}</li>`;

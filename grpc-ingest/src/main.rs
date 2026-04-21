@@ -74,6 +74,7 @@ struct NormalizedBuildEvent<'a> {
     build_id: &'a str,
     invocation_id: &'a str,
     sequence_number: i64,
+    notification_keywords: &'a [String],
     bazel_event_proto_base64: String,
 }
 
@@ -105,6 +106,7 @@ impl HttpSinkConfig {
         project_id: &str,
         stream_id: &StreamId,
         sequence_number: i64,
+        notification_keywords: &[String],
         payload: &[u8],
     ) -> Result<String, Status> {
         let line = NormalizedBuildEvent {
@@ -112,6 +114,7 @@ impl HttpSinkConfig {
             build_id: stream_id.build_id.as_str(),
             invocation_id: stream_id.invocation_id.as_str(),
             sequence_number,
+            notification_keywords,
             bazel_event_proto_base64: BASE64_STANDARD.encode(payload),
         };
         serde_json::to_string(&line)
@@ -276,6 +279,7 @@ async fn handle_stream_message(
     Status,
 > {
     let project_id = message.project_id.clone();
+    let notification_keywords = message.notification_keywords.clone();
     let ordered = message
         .ordered_build_event
         .ok_or_else(|| Status::invalid_argument("missing ordered_build_event"))?;
@@ -294,6 +298,7 @@ async fn handle_stream_message(
         project_id.as_str(),
         &stream_id,
         ordered.sequence_number,
+        notification_keywords.as_slice(),
         ordered.event.as_ref(),
     )?;
 
@@ -313,6 +318,7 @@ fn maybe_render_ndjson_line(
     project_id: &str,
     stream_id: &StreamId,
     sequence_number: i64,
+    notification_keywords: &[String],
     envelope: Option<&BesEnvelope>,
 ) -> Result<Option<String>, Status> {
     let Some(envelope) = envelope else {
@@ -323,8 +329,14 @@ fn maybe_render_ndjson_line(
     };
 
     decode_bazel_event(Some(envelope))?;
-    sink.render_ndjson_line(project_id, stream_id, sequence_number, any.value.as_slice())
-        .map(Some)
+    sink.render_ndjson_line(
+        project_id,
+        stream_id,
+        sequence_number,
+        notification_keywords,
+        any.value.as_slice(),
+    )
+    .map(Some)
 }
 
 fn decode_bazel_event(
