@@ -59,7 +59,8 @@ Chunk upload request:
   "chunk_index": 0,
   "chunk_count": 4,
   "notification_keywords": ["source:ci"],
-  "chunk_body": "{\"project_id\":\"...\"}\n{\"project_id\":\"...\"}"
+  "compression": "gzip",
+  "chunk_body_base64": "<base64-gzipped-ndjson-lines>"
 }
 ```
 

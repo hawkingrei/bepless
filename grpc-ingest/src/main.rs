@@ -1,9 +1,11 @@
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use flate2::{write::GzEncoder, Compression};
 use prost::Message;
 use prost_types::Any;
 use serde::Serialize;
+use std::io::Write;
 use tokio::{signal, sync::mpsc, time::sleep};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{async_trait, transport::Server, Request, Response, Status, Streaming};
@@ -86,7 +88,8 @@ struct ChunkUploadRequest<'a> {
     chunk_index: u32,
     chunk_count: u32,
     notification_keywords: &'a [String],
-    chunk_body: &'a str,
+    compression: &'a str,
+    chunk_body_base64: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -205,7 +208,9 @@ impl HttpSinkConfig {
                     chunk_index: chunk_index as u32,
                     chunk_count,
                     notification_keywords,
-                    chunk_body,
+                    compression: "gzip",
+                    chunk_body_base64: gzip_base64(chunk_body)
+                        .map_err(|err| format!("failed to gzip chunk body: {err}"))?,
                 };
                 let response = client
                     .post(&chunk_endpoint)
@@ -576,6 +581,13 @@ fn chunk_lines(lines: &[String], max_chunk_bytes: usize) -> Vec<String> {
     }
 
     chunks
+}
+
+fn gzip_base64(input: &str) -> Result<String, std::io::Error> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(input.as_bytes())?;
+    let compressed = encoder.finish()?;
+    Ok(BASE64_STANDARD.encode(compressed))
 }
 
 fn decode_bazel_event(

@@ -187,6 +187,13 @@ Each NDJSON line inside the chunk bodies still contains:
 - `notification_keywords`
 - `bazel_event_proto_base64`
 
+Each uploaded chunk request now carries:
+
+- `compression = "gzip"`
+- `chunk_body_base64`
+
+where `chunk_body_base64` is the base64-encoded gzip payload for one chunk of NDJSON lines.
+
 It still intentionally does not include:
 
 - tunnel configuration

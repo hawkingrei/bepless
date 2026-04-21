@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
+use std::io::Read;
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use flate2::read::GzDecoder;
 use prost::Message;
 use prost_types::{Duration as ProtoDuration, Timestamp as ProtoTimestamp};
 use serde::{Deserialize, Serialize};
@@ -80,7 +82,12 @@ struct IngestChunkRequest {
     chunk_count: u32,
     #[serde(default)]
     notification_keywords: Vec<String>,
-    chunk_body: String,
+    #[serde(default)]
+    compression: Option<String>,
+    #[serde(default)]
+    chunk_body: Option<String>,
+    #[serde(default)]
+    chunk_body_base64: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -579,11 +586,12 @@ async fn ingest_chunk_request(req: &mut Request, env: &worker::Env) -> Result<Re
         worker::Error::RustError(format!("Invalid ingest chunk JSON payload: {}", err))
     })?;
     validate_chunk_request(&payload)?;
+    let chunk_body = decode_chunk_body(&payload)?;
 
     let bucket = open_chunk_bucket(env)?;
     let object_key = chunk_object_key(&payload.invocation_id, payload.chunk_index);
     bucket
-        .put(object_key.clone(), payload.chunk_body.as_bytes().to_vec())
+        .put(object_key.clone(), chunk_body.as_bytes().to_vec())
         .execute()
         .await?;
 
@@ -599,7 +607,11 @@ async fn ingest_chunk_request(req: &mut Request, env: &worker::Env) -> Result<Re
                 "notification_keywords",
                 payload.notification_keywords.len().to_string(),
             ),
-            ("chunk_bytes", payload.chunk_body.len().to_string()),
+            ("chunk_bytes", chunk_body.len().to_string()),
+            (
+                "compression",
+                payload.compression.clone().unwrap_or_else(|| "none".to_string()),
+            ),
         ],
     );
 
@@ -1086,9 +1098,19 @@ fn validate_chunk_request(payload: &IngestChunkRequest) -> Result<()> {
             payload.chunk_index, payload.chunk_count
         )));
     }
-    if payload.chunk_body.trim().is_empty() {
+    let has_plain = payload
+        .chunk_body
+        .as_ref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let has_encoded = payload
+        .chunk_body_base64
+        .as_ref()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    if !has_plain && !has_encoded {
         return Err(worker::Error::RustError(
-            "ingest chunk body must not be empty".into(),
+            "ingest chunk payload must contain chunk_body or chunk_body_base64".into(),
         ));
     }
     Ok(())
@@ -1113,6 +1135,37 @@ fn chunk_object_key(invocation_id: &str, chunk_index: u32) -> String {
         "invocations/{}/chunks/{:08}.ndjson",
         invocation_id, chunk_index
     )
+}
+
+fn decode_chunk_body(payload: &IngestChunkRequest) -> Result<String> {
+    match payload.compression.as_deref() {
+        Some("gzip") => {
+            let encoded = payload.chunk_body_base64.as_ref().ok_or_else(|| {
+                worker::Error::RustError(
+                    "gzip-compressed ingest chunk must provide chunk_body_base64".into(),
+                )
+            })?;
+            let compressed = BASE64_STANDARD.decode(encoded).map_err(|err| {
+                worker::Error::RustError(format!(
+                    "failed to decode base64-compressed chunk body: {}",
+                    err
+                ))
+            })?;
+            let mut decoder = GzDecoder::new(compressed.as_slice());
+            let mut output = String::new();
+            decoder.read_to_string(&mut output).map_err(|err| {
+                worker::Error::RustError(format!("failed to gunzip ingest chunk body: {}", err))
+            })?;
+            Ok(output)
+        }
+        Some(other) => Err(worker::Error::RustError(format!(
+            "unsupported ingest chunk compression: {}",
+            other
+        ))),
+        None => payload.chunk_body.clone().ok_or_else(|| {
+            worker::Error::RustError("plain ingest chunk must provide chunk_body".into())
+        }),
+    }
 }
 
 fn extract_ingest_metadata(input: &str) -> IngestMetadata {
