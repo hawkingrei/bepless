@@ -4,7 +4,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use prost::Message;
 use prost_types::Any;
 use serde::Serialize;
-use tokio::{signal, sync::Mutex};
+use tokio::{signal, sync::mpsc, time::sleep};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{async_trait, transport::Server, Request, Response, Status, Streaming};
 use tracing::{error, info};
@@ -82,6 +82,8 @@ struct NormalizedBuildEvent<'a> {
 struct HttpSinkConfig {
     endpoint_url: Option<String>,
     timeout: Duration,
+    max_retries: usize,
+    retry_backoff: Duration,
 }
 
 impl Default for HttpSinkConfig {
@@ -95,6 +97,16 @@ impl Default for HttpSinkConfig {
                     .ok()
                     .and_then(|value| value.parse::<u64>().ok())
                     .unwrap_or(15),
+            ),
+            max_retries: env::var("BEPLESS_HTTP_SINK_MAX_RETRIES")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(5),
+            retry_backoff: Duration::from_secs(
+                env::var("BEPLESS_HTTP_SINK_RETRY_BACKOFF_SECONDS")
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(2),
             ),
         }
     }
@@ -178,9 +190,31 @@ impl HttpSinkConfig {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
+struct PendingInvocation {
+    project_id: String,
+    stream_id: StreamId,
+    lines: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 struct BesIngestService {
-    sink: Arc<Mutex<HttpSinkConfig>>,
+    sink: Arc<HttpSinkConfig>,
+    flush_tx: mpsc::Sender<PendingInvocation>,
+}
+
+impl BesIngestService {
+    fn new() -> Self {
+        let sink = Arc::new(HttpSinkConfig::default());
+        let queue_capacity = env::var("BEPLESS_HTTP_SINK_QUEUE_CAPACITY")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(128);
+        let (flush_tx, flush_rx) = mpsc::channel(queue_capacity);
+        tokio::spawn(run_sink_worker(Arc::clone(&sink), flush_rx));
+
+        Self { sink, flush_tx }
+    }
 }
 
 #[async_trait]
@@ -213,6 +247,7 @@ impl PublishBuildEvent for BesIngestService {
         let mut inbound = request.into_inner();
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let sink = Arc::clone(&self.sink);
+        let flush_tx = self.flush_tx.clone();
 
         tokio::spawn(async move {
             let mut buffered_lines = Vec::new();
@@ -236,17 +271,14 @@ impl PublishBuildEvent for BesIngestService {
                     },
                     Ok(None) => {
                         if let Some((project_id, stream_id)) = stream_context {
-                            let sink_config = sink.lock().await.clone();
-                            if let Err(err) = sink_config
-                                .flush(&project_id, &stream_id, &buffered_lines)
-                                .await
-                            {
-                                error!(
-                                    invocation_id = stream_id.invocation_id,
-                                    build_id = stream_id.build_id,
-                                    "failed to flush invocation to http sink: {err}"
-                                );
-                            }
+                            enqueue_invocation(
+                                flush_tx.clone(),
+                                PendingInvocation {
+                                    project_id,
+                                    stream_id,
+                                    lines: buffered_lines,
+                                },
+                            );
                         }
                         return;
                     }
@@ -267,7 +299,7 @@ impl PublishBuildEvent for BesIngestService {
 }
 
 async fn handle_stream_message(
-    sink: &Arc<Mutex<HttpSinkConfig>>,
+    sink: &Arc<HttpSinkConfig>,
     message: PublishBuildToolEventStreamRequest,
 ) -> Result<
     (
@@ -292,9 +324,8 @@ async fn handle_stream_message(
         return Err(Status::invalid_argument("sequence_number must be positive"));
     }
 
-    let sink_config = sink.lock().await.clone();
     let encoded_line = maybe_render_ndjson_line(
-        &sink_config,
+        sink.as_ref(),
         project_id.as_str(),
         &stream_id,
         ordered.sequence_number,
@@ -339,6 +370,78 @@ fn maybe_render_ndjson_line(
     .map(Some)
 }
 
+fn enqueue_invocation(flush_tx: mpsc::Sender<PendingInvocation>, pending: PendingInvocation) {
+    match flush_tx.try_send(pending) {
+        Ok(_) => {}
+        Err(mpsc::error::TrySendError::Full(pending)) => {
+            tokio::spawn(async move {
+                if let Err(err) = flush_tx.send(pending).await {
+                    error!(
+                        "failed to enqueue invocation for asynchronous sink flush: {}",
+                        err
+                    );
+                }
+            });
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            error!("sink flush queue is closed; dropping invocation");
+        }
+    }
+}
+
+async fn run_sink_worker(
+    sink: Arc<HttpSinkConfig>,
+    mut flush_rx: mpsc::Receiver<PendingInvocation>,
+) {
+    while let Some(pending) = flush_rx.recv().await {
+        if let Err(err) = flush_with_retry(sink.as_ref(), &pending).await {
+            error!(
+                invocation_id = pending.stream_id.invocation_id,
+                build_id = pending.stream_id.build_id,
+                "failed to flush invocation to http sink after retries: {err}"
+            );
+        }
+    }
+}
+
+async fn flush_with_retry(
+    sink: &HttpSinkConfig,
+    pending: &PendingInvocation,
+) -> Result<(), String> {
+    let attempts = sink.max_retries.max(1);
+
+    for attempt in 1..=attempts {
+        match sink
+            .flush(&pending.project_id, &pending.stream_id, &pending.lines)
+            .await
+        {
+            Ok(_) => {
+                info!(
+                    invocation_id = pending.stream_id.invocation_id,
+                    build_id = pending.stream_id.build_id,
+                    line_count = pending.lines.len(),
+                    attempt,
+                    "queued invocation flushed to http sink"
+                );
+                return Ok(());
+            }
+            Err(err) if attempt < attempts => {
+                error!(
+                    invocation_id = pending.stream_id.invocation_id,
+                    build_id = pending.stream_id.build_id,
+                    attempt,
+                    max_attempts = attempts,
+                    "failed to flush invocation to http sink, retrying: {err}"
+                );
+                sleep(sink.retry_backoff).await;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    Err("unreachable retry state".to_string())
+}
+
 fn decode_bazel_event(
     envelope: Option<&BesEnvelope>,
 ) -> Result<Option<build_event_stream::BuildEvent>, Status> {
@@ -380,11 +483,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await;
 
-    let service = BesIngestService::default();
-    let sink_config = service.sink.lock().await.clone();
+    let service = BesIngestService::new();
+    let sink_config = service.sink.as_ref().clone();
 
     info!(
         http_sink_configured = sink_config.endpoint_url.is_some(),
+        http_sink_retry_attempts = sink_config.max_retries,
         "bepless grpc-ingest listening on {listen_addr}; configured as a thin BES ingress without embedded secrets"
     );
 

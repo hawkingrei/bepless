@@ -40,6 +40,15 @@ Useful environment variables:
 - `BEPLESS_HTTP_SINK_TIMEOUT_SECONDS`
   - Optional.
   - Defaults to `15`.
+- `BEPLESS_HTTP_SINK_MAX_RETRIES`
+  - Optional.
+  - Defaults to `5`.
+- `BEPLESS_HTTP_SINK_RETRY_BACKOFF_SECONDS`
+  - Optional.
+  - Defaults to `2`.
+- `BEPLESS_HTTP_SINK_QUEUE_CAPACITY`
+  - Optional.
+  - Defaults to `128`.
 - `RUST_LOG`
   - Optional.
   - Example: `info`, `debug`.
@@ -142,7 +151,8 @@ For build tool streams it:
 - accepts ordered BES events
 - decodes Bazel BEP payloads from the `bazel_event` `Any`
 - buffers normalized NDJSON lines for the invocation
-- flushes the invocation to a configurable HTTP endpoint when the stream ends
+- enqueues the completed invocation into an in-memory async sink queue when the stream ends
+- flushes queued invocations to a configurable HTTP endpoint in the background
 - sends ACKs using the incoming stream ID and sequence number
 
 ## HTTP Sink
