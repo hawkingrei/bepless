@@ -14,6 +14,7 @@ use worker::{
 };
 
 const CHUNK_BUCKET_BINDING: &str = "BEPLESS_CHUNKS";
+const REVIEW_BODY_POINTER_PREFIX: &str = "r2://";
 
 pub mod blaze {
     include!(concat!(env!("OUT_DIR"), "/blaze.rs"));
@@ -610,7 +611,10 @@ async fn ingest_chunk_request(req: &mut Request, env: &worker::Env) -> Result<Re
             ("chunk_bytes", chunk_body.len().to_string()),
             (
                 "compression",
-                payload.compression.clone().unwrap_or_else(|| "none".to_string()),
+                payload
+                    .compression
+                    .clone()
+                    .unwrap_or_else(|| "none".to_string()),
             ),
         ],
     );
@@ -797,7 +801,7 @@ async fn get_review(env: &worker::Env, path: &str) -> Result<Response> {
         notification_keywords: parse_keywords_json(&row.notification_keywords_json)?,
         uploaded_at_ms: row.uploaded_at_ms,
         analysis,
-        ingest_body: row.ingest_body,
+        ingest_body: resolve_stored_ingest_body(env, &row.ingest_body).await?,
     };
 
     let mut response = Response::from_json(&payload)?;
@@ -951,6 +955,12 @@ async fn store_ingest_review(
     let analysis_json = serde_json::to_string(analysis).map_err(|err| {
         worker::Error::RustError(format!("Failed to serialize analysis payload: {}", err))
     })?;
+    let review_body_pointer = store_review_body(
+        env,
+        metadata.invocation_id.as_deref(),
+        normalized_ingest_body,
+    )
+    .await?;
     let notification_keywords_json = serde_json::to_string(&metadata.notification_keywords)
         .map_err(|err| {
             worker::Error::RustError(format!(
@@ -973,6 +983,7 @@ async fn store_ingest_review(
             ("build_id", metadata.build_id.clone().unwrap_or_default()),
             ("notification_keywords", notification_keywords_json.clone()),
             ("normalized_bytes", normalized_ingest_body.len().to_string()),
+            ("review_body_pointer", review_body_pointer.clone()),
         ],
     );
 
@@ -1007,7 +1018,7 @@ async fn store_ingest_review(
             .unwrap_or_else(JsValue::null),
         JsValue::from_str(&notification_keywords_json),
         JsValue::from_f64(uploaded_at_ms as f64),
-        JsValue::from_str(normalized_ingest_body),
+        JsValue::from_str(&review_body_pointer),
         JsValue::from_str(&analysis_json),
     ])?
     .run()
@@ -1077,7 +1088,7 @@ async fn find_review_by_invocation_id(
         notification_keywords: parse_keywords_json(&row.notification_keywords_json)?,
         uploaded_at_ms: row.uploaded_at_ms,
         analysis,
-        ingest_body: row.ingest_body,
+        ingest_body: resolve_stored_ingest_body(env, &row.ingest_body).await?,
     }))
 }
 
@@ -1135,6 +1146,55 @@ fn chunk_object_key(invocation_id: &str, chunk_index: u32) -> String {
         "invocations/{}/chunks/{:08}.ndjson",
         invocation_id, chunk_index
     )
+}
+
+fn review_body_object_key(invocation_id: Option<&str>) -> String {
+    format!(
+        "reviews/{}/normalized.ndjson",
+        invocation_id.unwrap_or("unknown")
+    )
+}
+
+async fn store_review_body(
+    env: &worker::Env,
+    invocation_id: Option<&str>,
+    normalized_ingest_body: &str,
+) -> Result<String> {
+    let bucket = open_chunk_bucket(env)?;
+    let object_key = review_body_object_key(invocation_id);
+    bucket
+        .put(
+            object_key.clone(),
+            normalized_ingest_body.as_bytes().to_vec(),
+        )
+        .execute()
+        .await?;
+    Ok(format!("{REVIEW_BODY_POINTER_PREFIX}{object_key}"))
+}
+
+async fn resolve_stored_ingest_body(env: &worker::Env, stored_value: &str) -> Result<String> {
+    let Some(object_key) = stored_value.strip_prefix(REVIEW_BODY_POINTER_PREFIX) else {
+        return Ok(stored_value.to_string());
+    };
+
+    let bucket = open_chunk_bucket(env)?;
+    let object = bucket.get(object_key.to_string()).execute().await?;
+    let Some(object) = object else {
+        return Err(worker::Error::RustError(format!(
+            "Stored review body object is missing from R2: {}",
+            object_key
+        )));
+    };
+    object
+        .body()
+        .ok_or_else(|| {
+            worker::Error::RustError(format!(
+                "Stored review body object has no body in R2: {}",
+                object_key
+            ))
+        })?
+        .text()
+        .await
 }
 
 fn decode_chunk_body(payload: &IngestChunkRequest) -> Result<String> {
