@@ -72,6 +72,9 @@ function destroyTimeline() {
 }
 
 export function renderTimeline(insights: any, options: TimelineRenderOptions) {
+  // TODO:
+  // - Add stronger failed-item emphasis in the timeline itself, not just via filter.
+  // - Add click-to-inspect details for the selected timeline item.
   const items = Array.isArray(insights.timelineItems) ? insights.timelineItems : [];
   if (items.length === 0) {
     destroyTimeline();

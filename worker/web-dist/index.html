@@ -5660,6 +5660,48 @@ li {
         message: firstErrorLine
       });
     }
+    if (summary.started_at_ms !== null) {
+      if (summary.analysis_phase_ms !== null && summary.analysis_phase_ms > 0) {
+        pushTimelineItem({
+          id: "build-analysis-phase",
+          group: "build",
+          category: "build",
+          start_ms: summary.started_at_ms,
+          end_ms: summary.started_at_ms + summary.analysis_phase_ms,
+          content: "analysis",
+          title: "Analysis phase",
+          detail: `${summary.analysis_phase_ms} ms`,
+          failed: false
+        });
+      }
+      if (summary.execution_phase_ms !== null && summary.execution_phase_ms > 0) {
+        const executionStartMs = summary.analysis_phase_ms !== null ? summary.started_at_ms + summary.analysis_phase_ms : summary.started_at_ms;
+        pushTimelineItem({
+          id: "build-execution-phase",
+          group: "build",
+          category: "build",
+          start_ms: executionStartMs,
+          end_ms: executionStartMs + summary.execution_phase_ms,
+          content: "execution",
+          title: "Execution phase",
+          detail: `${summary.execution_phase_ms} ms`,
+          failed: false
+        });
+      }
+    }
+    if (summary.finished_at_ms !== null && summary.critical_path_ms !== null && summary.critical_path_ms > 0) {
+      pushTimelineItem({
+        id: "build-critical-path",
+        group: "build",
+        category: "build",
+        start_ms: Math.max(0, summary.finished_at_ms - summary.critical_path_ms),
+        end_ms: summary.finished_at_ms,
+        content: "critical path",
+        title: "Critical path hint",
+        detail: `${summary.critical_path_ms} ms`,
+        failed: summary.success === false
+      });
+    }
     if (invocationWindow?.started_at_ms !== void 0 && invocationWindow?.finished_at_ms !== void 0) {
       timelineItems.unshift({
         id: "build-span",
