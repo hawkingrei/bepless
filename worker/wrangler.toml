@@ -6,6 +6,21 @@ workers_dev = true
 [build]
 command = "npm run build:web && cargo install -q --locked worker-build && worker-build --release"
 
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
+
 # Configure a D1 binding named `BEPLESS_DB` in your local deployment config.
 # Keep the actual database IDs out of the repository.
 [[d1_databases]]
@@ -17,5 +32,47 @@ preview_database_id = "2852ef44-b71c-4b91-8583-6ea20253c5b2"
 [env.dev]
 name = "bep-analyzer-worker-dev"
 
+[env.dev.observability]
+enabled = true
+head_sampling_rate = 1
+
+[env.dev.observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[env.dev.observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
+
+[[env.dev.d1_databases]]
+binding = "BEPLESS_DB"
+database_name = "bepless"
+database_id = "2852ef44-b71c-4b91-8583-6ea20253c5b2"
+preview_database_id = "2852ef44-b71c-4b91-8583-6ea20253c5b2"
+
 [env.production]
 name = "bep-analyzer-worker"
+
+[env.production.observability]
+enabled = true
+head_sampling_rate = 1
+
+[env.production.observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[env.production.observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
+
+[[env.production.d1_databases]]
+binding = "BEPLESS_DB"
+database_name = "bepless"
+database_id = "2852ef44-b71c-4b91-8583-6ea20253c5b2"
+preview_database_id = "2852ef44-b71c-4b91-8583-6ea20253c5b2"

@@ -6,7 +6,10 @@ use prost_types::{Duration as ProtoDuration, Timestamp as ProtoTimestamp};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use worker::wasm_bindgen::JsValue;
-use worker::{event, Context, D1Database, FormEntry, Method, Request, Response, Result};
+use worker::{
+    console_error, console_log, event, Context, D1Database, FormEntry, Method, Request, Response,
+    Result,
+};
 
 pub mod blaze {
     include!(concat!(env!("OUT_DIR"), "/blaze.rs"));
@@ -461,7 +464,9 @@ impl AnalyzerState {
 async fn fetch(mut req: Request, env: worker::Env, _ctx: Context) -> Result<Response> {
     console_error_panic_hook::set_once();
 
-    match (req.method(), req.path().as_str()) {
+    let method = req.method().to_string();
+    let path = req.path();
+    let route_result = match (req.method(), path.as_str()) {
         (Method::Options, _) => cors_response(),
         (Method::Get, "/") => html_response(),
         (Method::Get, "/api/reviews") => list_reviews(&env).await,
@@ -470,6 +475,18 @@ async fn fetch(mut req: Request, env: worker::Env, _ctx: Context) -> Result<Resp
         (Method::Post, "/analyze") => analyze_request(&mut req).await,
         (Method::Post, "/ingest") => ingest_request(&mut req, &env).await,
         _ => json_error(404, "not_found", "Route not found"),
+    };
+
+    match route_result {
+        Ok(response) => Ok(response),
+        Err(err) => {
+            let error = err.to_string();
+            log_error(
+                "request_failed",
+                vec![("method", method), ("path", path), ("error", error)],
+            );
+            json_error(500, "internal_error", "Internal server error")
+        }
     }
 }
 
@@ -488,6 +505,10 @@ async fn analyze_request(req: &mut Request) -> Result<Response> {
 
 async fn ingest_request(req: &mut Request, env: &worker::Env) -> Result<Response> {
     let payload = extract_payload(req).await?;
+    log_info(
+        "ingest_request_received",
+        vec![("payload_bytes", payload.len().to_string())],
+    );
     let content = String::from_utf8(payload)
         .map_err(|_| worker::Error::RustError("Request body is not valid UTF-8".into()))?;
     let normalized =
@@ -495,6 +516,17 @@ async fn ingest_request(req: &mut Request, env: &worker::Env) -> Result<Response
     let result =
         analyze_ndjson(&normalized).map_err(|message| worker::Error::RustError(message))?;
     store_ingest_review(env, &content, &normalized, &result).await?;
+    log_info(
+        "ingest_request_stored",
+        vec![
+            (
+                "invocation_id",
+                result.summary.invocation_id.clone().unwrap_or_default(),
+            ),
+            ("failed_targets", result.failed_targets.len().to_string()),
+            ("failed_tests", result.summary.failed_tests.to_string()),
+        ],
+    );
 
     let mut response = Response::from_json(&result)?;
     response
@@ -517,6 +549,10 @@ async fn list_reviews(env: &worker::Env) -> Result<Response> {
         .all()
         .await?;
     let rows = result.results::<StoredReviewRow>()?;
+    log_info(
+        "reviews_loaded",
+        vec![("row_count", rows.len().to_string())],
+    );
     let mut reviews = Vec::with_capacity(rows.len());
 
     for row in rows {
@@ -565,6 +601,10 @@ async fn get_review(env: &worker::Env, path: &str) -> Result<Response> {
         .bind(&[JsValue::from_f64(review_id as f64)])?;
     let row = statement.first::<StoredReviewRow>(None).await?;
     let Some(row) = row else {
+        log_info(
+            "review_not_found",
+            vec![("review_id", review_id.to_string())],
+        );
         return json_error(404, "review_not_found", "Review not found");
     };
 
@@ -680,7 +720,17 @@ fn normalize_ingest_ndjson(input: &str) -> std::result::Result<String, String> {
 }
 
 fn open_database(env: &worker::Env) -> Result<D1Database> {
-    env.d1("BEPLESS_DB")
+    match env.d1("BEPLESS_DB") {
+        Ok(db) => Ok(db),
+        Err(err) => {
+            let error = err.to_string();
+            log_error(
+                "open_database_failed",
+                vec![("binding", "BEPLESS_DB".to_string()), ("error", error)],
+            );
+            Err(err)
+        }
+    }
 }
 
 fn is_review_entry_path(path: &str) -> bool {
@@ -694,8 +744,7 @@ fn is_review_entry_path(path: &str) -> bool {
 
 async fn ensure_schema(db: &D1Database) -> Result<()> {
     db.exec(
-        r#"
-        CREATE TABLE IF NOT EXISTS reviews (
+        "CREATE TABLE IF NOT EXISTS reviews (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             source_type TEXT NOT NULL,
             project_id TEXT,
@@ -705,12 +754,13 @@ async fn ensure_schema(db: &D1Database) -> Result<()> {
             uploaded_at_ms INTEGER NOT NULL,
             ingest_body TEXT NOT NULL,
             analysis_json TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_reviews_uploaded_at ON reviews(uploaded_at_ms DESC, id DESC);
-        "#,
+        )",
     )
     .await?;
+    db.exec("CREATE INDEX IF NOT EXISTS idx_reviews_uploaded_at ON reviews(uploaded_at_ms DESC, id DESC)")
+        .await?;
     ensure_notification_keywords_column(db).await?;
+    log_info("ensure_schema_succeeded", vec![]);
     Ok(())
 }
 
@@ -733,10 +783,30 @@ async fn store_ingest_review(
     let analysis_json = serde_json::to_string(analysis).map_err(|err| {
         worker::Error::RustError(format!("Failed to serialize analysis payload: {}", err))
     })?;
-    let notification_keywords_json =
-        serde_json::to_string(&metadata.notification_keywords).map_err(|err| {
-            worker::Error::RustError(format!("Failed to serialize notification keywords: {}", err))
+    let notification_keywords_json = serde_json::to_string(&metadata.notification_keywords)
+        .map_err(|err| {
+            worker::Error::RustError(format!(
+                "Failed to serialize notification keywords: {}",
+                err
+            ))
         })?;
+
+    log_info(
+        "store_ingest_review_begin",
+        vec![
+            (
+                "invocation_id",
+                metadata.invocation_id.clone().unwrap_or_default(),
+            ),
+            (
+                "project_id",
+                metadata.project_id.clone().unwrap_or_default(),
+            ),
+            ("build_id", metadata.build_id.clone().unwrap_or_default()),
+            ("notification_keywords", notification_keywords_json.clone()),
+            ("normalized_bytes", normalized_ingest_body.len().to_string()),
+        ],
+    );
 
     db.prepare(
         "INSERT INTO reviews (
@@ -774,6 +844,13 @@ async fn store_ingest_review(
     ])?
     .run()
     .await?;
+    log_info(
+        "store_ingest_review_inserted",
+        vec![(
+            "invocation_id",
+            metadata.invocation_id.clone().unwrap_or_default(),
+        )],
+    );
 
     db.prepare(
         "DELETE FROM reviews
@@ -786,6 +863,13 @@ async fn store_ingest_review(
     )
     .run()
     .await?;
+    log_info(
+        "store_ingest_review_trimmed",
+        vec![(
+            "invocation_id",
+            metadata.invocation_id.clone().unwrap_or_default(),
+        )],
+    );
 
     Ok(())
 }
@@ -844,6 +928,30 @@ fn parse_keywords_json(input: &str) -> Result<Vec<String>> {
             err
         ))
     })
+}
+
+fn log_info(event_name: &str, fields: Vec<(&str, String)>) {
+    console_log!("{}", format_log_line(event_name, &fields));
+}
+
+fn log_error(event_name: &str, fields: Vec<(&str, String)>) {
+    console_error!("{}", format_log_line(event_name, &fields));
+}
+
+fn format_log_line(event_name: &str, fields: &[(&str, String)]) -> String {
+    let mut line = format!("event={}", event_name);
+    for (key, value) in fields {
+        line.push(' ');
+        line.push_str(key);
+        line.push('=');
+        line.push_str(&escape_log_value(value));
+    }
+    line
+}
+
+fn escape_log_value(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{}\"", escaped)
 }
 
 #[allow(deprecated)]
