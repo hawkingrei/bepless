@@ -77,6 +77,7 @@
 
             <section class="tab-strip panel">
               <button class="tab-button tab-button-active" data-tab="summary" type="button">Summary</button>
+              <button class="tab-button" data-tab="timeline" type="button">Timeline</button>
               <button class="tab-button" data-tab="runtime" type="button">Runtime</button>
               <button class="tab-button" data-tab="hotspots" type="button">Hotspots</button>
               <button class="tab-button" data-tab="execution" type="button">Execution</button>
@@ -103,6 +104,41 @@
                   </ul>
                 </section>
               </div>
+            </section>
+
+            <section class="section-block tab-panel" data-tab-panel="timeline">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Chronology</p>
+                  <h2>Wall-Time Timeline</h2>
+                </div>
+              </div>
+              <section class="panel">
+                <p class="section-copy">
+                  Timeline bars are ordered by actual start time. The chart shows the build span and
+                  the longest actions with absolute timestamps present in BEP.
+                </p>
+                <div class="timeline-toolbar">
+                  <div class="timeline-filters" id="timeline-filters">
+                    <button class="secondary compact timeline-filter-button timeline-filter-button-active" data-timeline-filter="longest" type="button">Longest</button>
+                    <button class="secondary compact timeline-filter-button" data-timeline-filter="all" type="button">All</button>
+                    <button class="secondary compact timeline-filter-button" data-timeline-filter="failed" type="button">Failed</button>
+                    <button class="secondary compact timeline-filter-button" data-timeline-filter="compile" type="button">Compile</button>
+                  </div>
+                  <label class="timeline-limit-label" for="timeline-limit">
+                    <span>Rows</span>
+                    <select id="timeline-limit">
+                      <option value="12">12</option>
+                      <option value="24" selected>24</option>
+                      <option value="48">48</option>
+                    </select>
+                  </label>
+                </div>
+                <div id="timeline-summary" class="timeline-summary muted">No uploaded reviews yet.</div>
+                <div id="timeline-chart" class="timeline-chart">
+                  <div class="muted">No uploaded reviews yet.</div>
+                </div>
+              </section>
             </section>
 
             <section class="section-block tab-panel" data-tab-panel="runtime">

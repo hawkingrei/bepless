@@ -78,12 +78,33 @@ struct NormalizedBuildEvent<'a> {
     bazel_event_proto_base64: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ChunkUploadRequest<'a> {
+    project_id: &'a str,
+    build_id: &'a str,
+    invocation_id: &'a str,
+    chunk_index: u32,
+    chunk_count: u32,
+    notification_keywords: &'a [String],
+    chunk_body: &'a str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct FinalizeUploadRequest<'a> {
+    project_id: &'a str,
+    build_id: &'a str,
+    invocation_id: &'a str,
+    chunk_count: u32,
+    notification_keywords: &'a [String],
+}
+
 #[derive(Debug, Clone)]
 struct HttpSinkConfig {
     endpoint_url: Option<String>,
     timeout: Duration,
     max_retries: usize,
     retry_backoff: Duration,
+    chunk_bytes: usize,
 }
 
 impl Default for HttpSinkConfig {
@@ -108,11 +129,27 @@ impl Default for HttpSinkConfig {
                     .and_then(|value| value.parse::<u64>().ok())
                     .unwrap_or(2),
             ),
+            chunk_bytes: env::var("BEPLESS_HTTP_SINK_CHUNK_BYTES")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(512 * 1024),
         }
     }
 }
 
 impl HttpSinkConfig {
+    fn chunk_endpoint_url(&self) -> Option<String> {
+        self.endpoint_url
+            .as_ref()
+            .map(|value| derive_sink_url(value, "/ingest", "/ingest-chunks"))
+    }
+
+    fn finalize_endpoint_url(&self) -> Option<String> {
+        self.endpoint_url
+            .as_ref()
+            .map(|value| derive_sink_url(value, "/ingest", "/ingest-finalize"))
+    }
+
     fn render_ndjson_line(
         &self,
         project_id: &str,
@@ -137,39 +174,78 @@ impl HttpSinkConfig {
         &self,
         project_id: &str,
         stream_id: &StreamId,
+        notification_keywords: &[String],
         lines: &[String],
     ) -> Result<(), String> {
         if lines.is_empty() {
             return Ok(());
         }
 
-        let body = lines.join("\n");
         if let Some(endpoint_url) = &self.endpoint_url {
             let client = reqwest::Client::builder()
                 .timeout(self.timeout)
                 .build()
                 .map_err(|err| format!("failed to build http sink client: {err}"))?;
 
+            let chunks = chunk_lines(lines, self.chunk_bytes);
+            let chunk_count = u32::try_from(chunks.len())
+                .map_err(|_| "chunk count exceeds u32 range".to_string())?;
+            let chunk_endpoint = self
+                .chunk_endpoint_url()
+                .ok_or_else(|| "failed to derive chunk endpoint url".to_string())?;
+            let finalize_endpoint = self
+                .finalize_endpoint_url()
+                .ok_or_else(|| "failed to derive finalize endpoint url".to_string())?;
+
+            for (chunk_index, chunk_body) in chunks.iter().enumerate() {
+                let request = ChunkUploadRequest {
+                    project_id,
+                    build_id: stream_id.build_id.as_str(),
+                    invocation_id: stream_id.invocation_id.as_str(),
+                    chunk_index: chunk_index as u32,
+                    chunk_count,
+                    notification_keywords,
+                    chunk_body,
+                };
+                let response = client
+                    .post(&chunk_endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .map_err(|err| format!("failed to upload chunk to http sink: {err}"))?;
+
+                if !response.status().is_success() {
+                    return Err(format!(
+                        "http sink chunk upload returned non-success status: {}",
+                        response.status()
+                    ));
+                }
+            }
+
+            let finalize = FinalizeUploadRequest {
+                project_id,
+                build_id: stream_id.build_id.as_str(),
+                invocation_id: stream_id.invocation_id.as_str(),
+                chunk_count,
+                notification_keywords,
+            };
             let response = client
-                .post(endpoint_url)
-                .header("content-type", "application/x-ndjson")
-                .header("x-bepless-project-id", project_id)
-                .header("x-bepless-build-id", stream_id.build_id.as_str())
-                .header("x-bepless-invocation-id", stream_id.invocation_id.as_str())
-                .body(body)
+                .post(&finalize_endpoint)
+                .json(&finalize)
                 .send()
                 .await
-                .map_err(|err| format!("failed to deliver ndjson to http sink: {err}"))?;
+                .map_err(|err| format!("failed to finalize chunk upload to http sink: {err}"))?;
 
             if !response.status().is_success() {
                 return Err(format!(
-                    "http sink returned non-success status: {}",
+                    "http sink finalize returned non-success status: {}",
                     response.status()
                 ));
             }
 
             info!(
                 endpoint_url,
+                chunk_count,
                 line_count = lines.len(),
                 invocation_id = stream_id.invocation_id,
                 "flushed invocation to http sink"
@@ -177,6 +253,7 @@ impl HttpSinkConfig {
             return Ok(());
         }
 
+        let body = lines.join("\n");
         info!(
             target: "bepless.grpc_ingest.ndjson",
             project_id,
@@ -194,6 +271,7 @@ impl HttpSinkConfig {
 struct PendingInvocation {
     project_id: String,
     stream_id: StreamId,
+    notification_keywords: Vec<String>,
     lines: Vec<String>,
 }
 
@@ -251,12 +329,19 @@ impl PublishBuildEvent for BesIngestService {
 
         tokio::spawn(async move {
             let mut buffered_lines = Vec::new();
-            let mut stream_context: Option<(String, StreamId)> = None;
+            let mut stream_context: Option<(String, StreamId, Vec<String>)> = None;
             loop {
                 match inbound.message().await {
                     Ok(Some(message)) => match handle_stream_message(&sink, message).await {
-                        Ok((response, maybe_line, project_id, stream_id)) => {
-                            stream_context = Some((project_id, stream_id.clone()));
+                        Ok((
+                            response,
+                            maybe_line,
+                            project_id,
+                            stream_id,
+                            notification_keywords,
+                        )) => {
+                            stream_context =
+                                Some((project_id, stream_id.clone(), notification_keywords));
                             if let Some(line) = maybe_line {
                                 buffered_lines.push(line);
                             }
@@ -270,12 +355,14 @@ impl PublishBuildEvent for BesIngestService {
                         }
                     },
                     Ok(None) => {
-                        if let Some((project_id, stream_id)) = stream_context {
+                        if let Some((project_id, stream_id, notification_keywords)) = stream_context
+                        {
                             enqueue_invocation(
                                 flush_tx.clone(),
                                 PendingInvocation {
                                     project_id,
                                     stream_id,
+                                    notification_keywords,
                                     lines: buffered_lines,
                                 },
                             );
@@ -307,6 +394,7 @@ async fn handle_stream_message(
         Option<String>,
         String,
         StreamId,
+        Vec<String>,
     ),
     Status,
 > {
@@ -341,6 +429,7 @@ async fn handle_stream_message(
         encoded_line,
         project_id,
         stream_id,
+        notification_keywords,
     ))
 }
 
@@ -412,7 +501,12 @@ async fn flush_with_retry(
 
     for attempt in 1..=attempts {
         match sink
-            .flush(&pending.project_id, &pending.stream_id, &pending.lines)
+            .flush(
+                &pending.project_id,
+                &pending.stream_id,
+                pending.notification_keywords.as_slice(),
+                &pending.lines,
+            )
             .await
         {
             Ok(_) => {
@@ -440,6 +534,48 @@ async fn flush_with_retry(
     }
 
     Err("unreachable retry state".to_string())
+}
+
+fn derive_sink_url(endpoint_url: &str, from_suffix: &str, to_suffix: &str) -> String {
+    if endpoint_url.ends_with(from_suffix) {
+        let prefix = endpoint_url.trim_end_matches(from_suffix);
+        return format!("{prefix}{to_suffix}");
+    }
+
+    format!(
+        "{}/{}",
+        endpoint_url.trim_end_matches('/'),
+        to_suffix.trim_start_matches('/')
+    )
+}
+
+fn chunk_lines(lines: &[String], max_chunk_bytes: usize) -> Vec<String> {
+    let safe_limit = max_chunk_bytes.max(1);
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+
+    for line in lines {
+        let line_len = line.len();
+        if current.is_empty() {
+            current.push_str(line);
+            continue;
+        }
+
+        if current.len() + 1 + line_len > safe_limit {
+            chunks.push(current);
+            current = String::new();
+            current.push_str(line);
+        } else {
+            current.push('\n');
+            current.push_str(line);
+        }
+    }
+
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+
+    chunks
 }
 
 fn decode_bazel_event(

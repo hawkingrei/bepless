@@ -7,9 +7,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use worker::wasm_bindgen::JsValue;
 use worker::{
-    console_error, console_log, event, Context, D1Database, FormEntry, Method, Request, Response,
-    Result,
+    console_error, console_log, event, Bucket, Context, D1Database, FormEntry, Method, Request,
+    Response, Result,
 };
+
+const CHUNK_BUCKET_BINDING: &str = "BEPLESS_CHUNKS";
 
 pub mod blaze {
     include!(concat!(env!("OUT_DIR"), "/blaze.rs"));
@@ -67,6 +69,36 @@ struct IngestEnvelope {
     #[serde(default)]
     notification_keywords: Vec<String>,
     bazel_event_proto_base64: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct IngestChunkRequest {
+    project_id: String,
+    build_id: String,
+    invocation_id: String,
+    chunk_index: u32,
+    chunk_count: u32,
+    #[serde(default)]
+    notification_keywords: Vec<String>,
+    chunk_body: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct IngestFinalizeRequest {
+    project_id: String,
+    build_id: String,
+    invocation_id: String,
+    chunk_count: u32,
+    #[serde(default)]
+    notification_keywords: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct IngestChunkAck {
+    invocation_id: String,
+    chunk_index: u32,
+    chunk_count: u32,
+    stored: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -474,6 +506,8 @@ async fn fetch(mut req: Request, env: worker::Env, _ctx: Context) -> Result<Resp
         (Method::Get, path) if is_review_entry_path(path) => html_response(),
         (Method::Post, "/analyze") => analyze_request(&mut req).await,
         (Method::Post, "/ingest") => ingest_request(&mut req, &env).await,
+        (Method::Post, "/ingest-chunks") => ingest_chunk_request(&mut req, &env).await,
+        (Method::Post, "/ingest-finalize") => ingest_finalize_request(&mut req, &env).await,
         _ => json_error(404, "not_found", "Route not found"),
     };
 
@@ -525,6 +559,136 @@ async fn ingest_request(req: &mut Request, env: &worker::Env) -> Result<Response
             ),
             ("failed_targets", result.failed_targets.len().to_string()),
             ("failed_tests", result.summary.failed_tests.to_string()),
+        ],
+    );
+
+    let mut response = Response::from_json(&result)?;
+    response
+        .headers_mut()
+        .set("content-type", "application/json; charset=utf-8")?;
+    apply_cors(response)
+}
+
+async fn ingest_chunk_request(req: &mut Request, env: &worker::Env) -> Result<Response> {
+    let body = req.bytes().await?;
+    log_info(
+        "ingest_chunk_request_received",
+        vec![("payload_bytes", body.len().to_string())],
+    );
+    let payload: IngestChunkRequest = serde_json::from_slice(&body).map_err(|err| {
+        worker::Error::RustError(format!("Invalid ingest chunk JSON payload: {}", err))
+    })?;
+    validate_chunk_request(&payload)?;
+
+    let bucket = open_chunk_bucket(env)?;
+    let object_key = chunk_object_key(&payload.invocation_id, payload.chunk_index);
+    bucket
+        .put(object_key.clone(), payload.chunk_body.as_bytes().to_vec())
+        .execute()
+        .await?;
+
+    log_info(
+        "ingest_chunk_stored",
+        vec![
+            ("invocation_id", payload.invocation_id.clone()),
+            ("build_id", payload.build_id.clone()),
+            ("project_id", payload.project_id.clone()),
+            ("chunk_index", payload.chunk_index.to_string()),
+            ("chunk_count", payload.chunk_count.to_string()),
+            (
+                "notification_keywords",
+                payload.notification_keywords.len().to_string(),
+            ),
+            ("chunk_bytes", payload.chunk_body.len().to_string()),
+        ],
+    );
+
+    let mut response = Response::from_json(&IngestChunkAck {
+        invocation_id: payload.invocation_id,
+        chunk_index: payload.chunk_index,
+        chunk_count: payload.chunk_count,
+        stored: true,
+    })?;
+    response
+        .headers_mut()
+        .set("content-type", "application/json; charset=utf-8")?;
+    apply_cors(response)
+}
+
+async fn ingest_finalize_request(req: &mut Request, env: &worker::Env) -> Result<Response> {
+    let body = req.bytes().await?;
+    let payload: IngestFinalizeRequest = serde_json::from_slice(&body).map_err(|err| {
+        worker::Error::RustError(format!("Invalid ingest finalize JSON payload: {}", err))
+    })?;
+    validate_finalize_request(&payload)?;
+
+    if let Some(existing_review) =
+        find_review_by_invocation_id(env, payload.invocation_id.as_str()).await?
+    {
+        log_info(
+            "ingest_finalize_reused_existing_review",
+            vec![
+                ("invocation_id", payload.invocation_id.clone()),
+                ("review_id", existing_review.id.to_string()),
+            ],
+        );
+        let mut response = Response::from_json(&existing_review.analysis)?;
+        response
+            .headers_mut()
+            .set("content-type", "application/json; charset=utf-8")?;
+        return apply_cors(response);
+    }
+
+    let bucket = open_chunk_bucket(env)?;
+    let mut chunk_bodies = Vec::with_capacity(payload.chunk_count as usize);
+    for chunk_index in 0..payload.chunk_count {
+        let object = bucket
+            .get(chunk_object_key(&payload.invocation_id, chunk_index))
+            .execute()
+            .await?;
+        let Some(object) = object else {
+            return Err(worker::Error::RustError(format!(
+                "Missing ingest chunk {} for invocation {}",
+                chunk_index, payload.invocation_id
+            )));
+        };
+        let chunk_body = object
+            .body()
+            .ok_or_else(|| {
+                worker::Error::RustError(format!(
+                    "Ingest chunk {} for invocation {} has no body",
+                    chunk_index, payload.invocation_id
+                ))
+            })?
+            .text()
+            .await?;
+        chunk_bodies.push(chunk_body);
+    }
+
+    let raw_ingest_body = chunk_bodies.join("\n");
+    let normalized = normalize_ingest_ndjson(&raw_ingest_body)
+        .map_err(|message| worker::Error::RustError(message))?;
+    let result =
+        analyze_ndjson(&normalized).map_err(|message| worker::Error::RustError(message))?;
+    store_ingest_review(env, &raw_ingest_body, &normalized, &result).await?;
+
+    let delete_keys = (0..payload.chunk_count)
+        .map(|chunk_index| chunk_object_key(&payload.invocation_id, chunk_index))
+        .collect::<Vec<_>>();
+    bucket.delete_multiple(delete_keys).await?;
+
+    log_info(
+        "ingest_finalize_completed",
+        vec![
+            ("invocation_id", payload.invocation_id.clone()),
+            ("build_id", payload.build_id.clone()),
+            ("project_id", payload.project_id.clone()),
+            ("chunk_count", payload.chunk_count.to_string()),
+            (
+                "notification_keywords",
+                payload.notification_keywords.len().to_string(),
+            ),
+            ("normalized_bytes", normalized.len().to_string()),
         ],
     );
 
@@ -731,6 +895,23 @@ fn open_database(env: &worker::Env) -> Result<D1Database> {
     }
 }
 
+fn open_chunk_bucket(env: &worker::Env) -> Result<Bucket> {
+    match env.bucket(CHUNK_BUCKET_BINDING) {
+        Ok(bucket) => Ok(bucket),
+        Err(err) => {
+            let error = err.to_string();
+            log_error(
+                "open_chunk_bucket_failed",
+                vec![
+                    ("binding", CHUNK_BUCKET_BINDING.to_string()),
+                    ("error", error),
+                ],
+            );
+            Err(err)
+        }
+    }
+}
+
 fn is_review_entry_path(path: &str) -> bool {
     if path == "/" || path.starts_with("/api/") {
         return false;
@@ -847,6 +1028,91 @@ async fn store_ingest_review(
     );
 
     Ok(())
+}
+
+async fn find_review_by_invocation_id(
+    env: &worker::Env,
+    invocation_id: &str,
+) -> Result<Option<StoredReviewDetail>> {
+    let db = open_database(env)?;
+    let statement = db
+        .prepare(
+            "SELECT id, source_type, project_id, build_id, invocation_id, notification_keywords_json, uploaded_at_ms, analysis_json, ingest_body
+             FROM reviews
+             WHERE invocation_id = ?1
+             ORDER BY uploaded_at_ms DESC, id DESC
+             LIMIT 1",
+        )
+        .bind(&[JsValue::from_str(invocation_id)])?;
+    let row = statement.first::<StoredReviewRow>(None).await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    let analysis: AnalysisResponse = serde_json::from_str(&row.analysis_json).map_err(|err| {
+        worker::Error::RustError(format!(
+            "Stored review {} has invalid analysis JSON: {}",
+            row.id, err
+        ))
+    })?;
+
+    Ok(Some(StoredReviewDetail {
+        id: row.id,
+        source_type: row.source_type,
+        project_id: row.project_id,
+        build_id: row.build_id,
+        invocation_id: row.invocation_id,
+        notification_keywords: parse_keywords_json(&row.notification_keywords_json)?,
+        uploaded_at_ms: row.uploaded_at_ms,
+        analysis,
+        ingest_body: row.ingest_body,
+    }))
+}
+
+fn validate_chunk_request(payload: &IngestChunkRequest) -> Result<()> {
+    if payload.invocation_id.trim().is_empty() {
+        return Err(worker::Error::RustError(
+            "ingest chunk invocation_id must not be empty".into(),
+        ));
+    }
+    if payload.chunk_count == 0 {
+        return Err(worker::Error::RustError(
+            "ingest chunk chunk_count must be positive".into(),
+        ));
+    }
+    if payload.chunk_index >= payload.chunk_count {
+        return Err(worker::Error::RustError(format!(
+            "ingest chunk index {} is out of range for {} chunks",
+            payload.chunk_index, payload.chunk_count
+        )));
+    }
+    if payload.chunk_body.trim().is_empty() {
+        return Err(worker::Error::RustError(
+            "ingest chunk body must not be empty".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_finalize_request(payload: &IngestFinalizeRequest) -> Result<()> {
+    if payload.invocation_id.trim().is_empty() {
+        return Err(worker::Error::RustError(
+            "ingest finalize invocation_id must not be empty".into(),
+        ));
+    }
+    if payload.chunk_count == 0 {
+        return Err(worker::Error::RustError(
+            "ingest finalize chunk_count must be positive".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn chunk_object_key(invocation_id: &str, chunk_index: u32) -> String {
+    format!(
+        "invocations/{}/chunks/{:08}.ndjson",
+        invocation_id, chunk_index
+    )
 }
 
 fn extract_ingest_metadata(input: &str) -> IngestMetadata {

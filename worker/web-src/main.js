@@ -11,6 +11,10 @@ const sinkConfig = document.getElementById("sink-config");
 
 const summaryGrid = document.getElementById("summary-grid");
 const keywordList = document.getElementById("keyword-list");
+const timelineSummary = document.getElementById("timeline-summary");
+const timelineChart = document.getElementById("timeline-chart");
+const timelineFilterButtons = Array.from(document.querySelectorAll("[data-timeline-filter]"));
+const timelineLimit = document.getElementById("timeline-limit");
 const hostJvmArgsList = document.getElementById("host-jvm-args-list");
 const jvmMetricsList = document.getElementById("jvm-metrics-list");
 const timingMetricsList = document.getElementById("timing-metrics-list");
@@ -34,6 +38,7 @@ const timingBreakdownList = document.getElementById("timing-breakdown-list");
 let currentReviewId = null;
 let activeTab = "summary";
 let activeFlakyLabel = null;
+let activeTimelineFilter = "longest";
 window.__lastBrowserInsights = null;
 
 function currentInvocationPath() {
@@ -60,6 +65,13 @@ function setActiveTab(tab) {
   }
   for (const panel of tabPanels) {
     panel.classList.toggle("hidden", panel.dataset.tabPanel !== tab);
+  }
+}
+
+function setActiveTimelineFilter(filter) {
+  activeTimelineFilter = filter;
+  for (const button of timelineFilterButtons) {
+    button.classList.toggle("timeline-filter-button-active", button.dataset.timelineFilter === filter);
   }
 }
 
@@ -194,11 +206,27 @@ function isFlakyTest(test) {
   return (attemptCount !== null && attemptCount > 1) || (totalRunCount !== null && totalRunCount > 1);
 }
 
+function hashString(value) {
+  let hash = 0;
+  for (const char of String(value || "")) {
+    hash = (hash * 31 + char.charCodeAt(0)) % 360;
+  }
+  return hash;
+}
+
+function mnemonicColor(mnemonic, success) {
+  const hue = hashString(mnemonic);
+  const saturation = success ? 64 : 72;
+  const lightness = success ? 42 : 38;
+  return `hsl(${hue} ${saturation}% ${lightness}%)`;
+}
+
 function summarizeBrowserInsights(input) {
   const compileItems = [];
   const ioItems = [];
   const testExecutionWallItems = [];
   const slowActions = [];
+  const timelineActions = [];
   const tests = [];
   const flakyTests = [];
   const flakyAttemptsByLabel = new Map();
@@ -208,6 +236,7 @@ function summarizeBrowserInsights(input) {
   let jvmMetrics = null;
   let timingMetrics = null;
   let networkMetrics = null;
+  let invocationWindow = null;
   const workerMetrics = [];
 
   for (const rawLine of input.split("\n")) {
@@ -336,6 +365,32 @@ function summarizeBrowserInsights(input) {
         command_preview: commandLine.join(" "),
         failure_detail: action.failureDetail || "",
       });
+      if (startTimeMs !== null && endTimeMs !== null) {
+        timelineActions.push({
+          label: actionId.label || "<unknown>",
+          mnemonic: action.type || "unknown",
+          start_ms: startTimeMs,
+          end_ms: endTimeMs,
+          duration_ms: Math.max(0, endTimeMs - startTimeMs),
+          success: action.success,
+        });
+      }
+    }
+
+    if (event.started) {
+      const startMs = toNumber(event.started.startTimeMillis);
+      if (startMs !== null) {
+        invocationWindow = invocationWindow || {};
+        invocationWindow.started_at_ms = startMs;
+      }
+    }
+
+    if (event.finished) {
+      const endMs = toNumber(event.finished.finishTimeMillis);
+      if (endMs !== null) {
+        invocationWindow = invocationWindow || {};
+        invocationWindow.finished_at_ms = endMs;
+      }
     }
 
     if (event.id && event.id.testSummary && event.testSummary) {
@@ -410,6 +465,10 @@ function summarizeBrowserInsights(input) {
     jvmMetrics,
     timingMetrics,
     networkMetrics,
+    invocationWindow,
+    timelineActions: timelineActions
+      .sort((left, right) => left.start_ms - right.start_ms || right.duration_ms - left.duration_ms)
+      .slice(0, 60),
     workerMetrics: workerMetrics
       .sort((left, right) => (right.worker_memory_kb ?? -1) - (left.worker_memory_kb ?? -1))
       .slice(0, 10),
@@ -422,6 +481,97 @@ function summarizeBrowserInsights(input) {
     flakyTests: flakyTests.slice(0, 10),
     flakyAttemptsByLabel,
   };
+}
+
+function renderTimeline(insights) {
+  const actions = insights.timelineActions || [];
+  const startCandidates = [];
+  const endCandidates = [];
+
+  if (insights.invocationWindow?.started_at_ms !== null && insights.invocationWindow?.started_at_ms !== undefined) {
+    startCandidates.push(insights.invocationWindow.started_at_ms);
+  }
+  if (insights.invocationWindow?.finished_at_ms !== null && insights.invocationWindow?.finished_at_ms !== undefined) {
+    endCandidates.push(insights.invocationWindow.finished_at_ms);
+  }
+  for (const action of actions) {
+    startCandidates.push(action.start_ms);
+    endCandidates.push(action.end_ms);
+  }
+
+  if (startCandidates.length === 0 || endCandidates.length === 0) {
+    timelineSummary.textContent = "No absolute wall-time markers in this BEP.";
+    timelineChart.innerHTML = '<div class="muted">No action or invocation timestamps found.</div>';
+    return;
+  }
+
+  const rangeStart = Math.min(...startCandidates);
+  const rangeEnd = Math.max(...endCandidates);
+  const totalMs = Math.max(1, rangeEnd - rangeStart);
+  const rowLimit = Math.max(1, Number(timelineLimit?.value || 24));
+  let filteredActions = actions.slice();
+  if (activeTimelineFilter === "failed") {
+    filteredActions = filteredActions.filter((item) => item.success === false);
+  } else if (activeTimelineFilter === "compile") {
+    filteredActions = filteredActions.filter((item) => isCompileMnemonic(item.mnemonic));
+  }
+
+  let visibleActions;
+  if (activeTimelineFilter === "all") {
+    visibleActions = filteredActions
+      .slice()
+      .sort((left, right) => left.start_ms - right.start_ms || right.duration_ms - left.duration_ms)
+      .slice(0, rowLimit);
+  } else {
+    visibleActions = filteredActions
+      .slice()
+      .sort((left, right) => right.duration_ms - left.duration_ms || left.start_ms - right.start_ms)
+      .slice(0, rowLimit)
+      .sort((left, right) => left.start_ms - right.start_ms || right.duration_ms - left.duration_ms);
+  }
+
+  const filterLabel = {
+    longest: "Longest",
+    all: "Earliest",
+    failed: "Failed",
+    compile: "Compile",
+  }[activeTimelineFilter] || "Longest";
+  timelineSummary.textContent =
+    `Start ${new Date(rangeStart).toLocaleString()} · End ${new Date(rangeEnd).toLocaleString()} · Span ${formatMs(totalMs)} · Showing ${visibleActions.length}/${actions.length} ${filterLabel.toLowerCase()} actions`;
+
+  const bars = [];
+  if (insights.invocationWindow?.started_at_ms !== null && insights.invocationWindow?.finished_at_ms !== null) {
+    const left = ((insights.invocationWindow.started_at_ms - rangeStart) / totalMs) * 100;
+    const width = ((insights.invocationWindow.finished_at_ms - insights.invocationWindow.started_at_ms) / totalMs) * 100;
+    bars.push(`
+      <div class="timeline-row timeline-row-build">
+        <div class="timeline-label">build</div>
+        <div class="timeline-track">
+          <div class="timeline-bar timeline-bar-build" style="left:${left}%; width:${Math.max(width, 0.8)}%"></div>
+        </div>
+        <div class="timeline-meta">${formatMs(insights.invocationWindow.finished_at_ms - insights.invocationWindow.started_at_ms)}</div>
+      </div>
+    `);
+  }
+
+  for (const action of visibleActions) {
+    const left = ((action.start_ms - rangeStart) / totalMs) * 100;
+    const width = ((action.end_ms - action.start_ms) / totalMs) * 100;
+    const mnemonic = escapeHtml(action.mnemonic);
+    const label = escapeHtml(action.label);
+    const color = mnemonicColor(action.mnemonic, action.success);
+    bars.push(`
+      <div class="timeline-row">
+        <div class="timeline-label" title="${label}">${mnemonic}</div>
+        <div class="timeline-track">
+          <div class="timeline-bar ${action.success ? "timeline-bar-success" : "timeline-bar-failed"}" style="--timeline-bar-color:${color}; left:${left}%; width:${Math.max(width, 0.8)}%" title="${label} · ${mnemonic} · ${formatMs(action.duration_ms)}"></div>
+        </div>
+        <div class="timeline-meta">${formatMs(action.duration_ms)}</div>
+      </div>
+    `);
+  }
+
+  timelineChart.innerHTML = bars.join("");
 }
 
 function createListItems(container, items, render, emptyText) {
@@ -481,6 +631,8 @@ function renderBrowserInsights(insights) {
   if (!activeFlakyLabel && insights.flakyTests.length > 0) {
     activeFlakyLabel = insights.flakyTests[0].label;
   }
+
+  renderTimeline(insights);
 
   createListItems(
     hostJvmArgsList,
@@ -825,6 +977,8 @@ function resetReviewPanels(message = "No uploaded reviews yet.") {
   activeFlakyLabel = null;
   summaryGrid.innerHTML = "";
   keywordList.innerHTML = `<li class="muted">${message}</li>`;
+  timelineSummary.textContent = message;
+  timelineChart.innerHTML = `<div class="muted">${message}</div>`;
   hostJvmArgsList.innerHTML = `<li class="muted">${message}</li>`;
   jvmMetricsList.innerHTML = `<li class="muted">${message}</li>`;
   timingMetricsList.innerHTML = `<li class="muted">${message}</li>`;
@@ -1019,6 +1173,21 @@ for (const button of tabButtons) {
   });
 }
 
+for (const button of timelineFilterButtons) {
+  button.addEventListener("click", () => {
+    setActiveTimelineFilter(button.dataset.timelineFilter || "longest");
+    if (window.__lastBrowserInsights) {
+      renderTimeline(window.__lastBrowserInsights);
+    }
+  });
+}
+
+timelineLimit?.addEventListener("change", () => {
+  if (window.__lastBrowserInsights) {
+    renderTimeline(window.__lastBrowserInsights);
+  }
+});
+
 historyList.addEventListener("click", async (event) => {
   const item = event.target.closest("[data-review-id]");
   if (!item) return;
@@ -1048,3 +1217,4 @@ flakyTestsList.addEventListener("click", (event) => {
 
 boot();
 setActiveTab(activeTab);
+setActiveTimelineFilter(activeTimelineFilter);

@@ -40,6 +40,10 @@ Useful environment variables:
 - `BEPLESS_HTTP_SINK_TIMEOUT_SECONDS`
   - Optional.
   - Defaults to `15`.
+- `BEPLESS_HTTP_SINK_CHUNK_BYTES`
+  - Optional.
+  - Maximum NDJSON bytes per chunk sent to the worker chunk ingress.
+  - Defaults to `524288` (512 KiB).
 - `BEPLESS_HTTP_SINK_MAX_RETRIES`
   - Optional.
   - Defaults to `5`.
@@ -161,22 +165,27 @@ The service can hand off one completed invocation to an HTTP endpoint.
 
 Request shape:
 
-- Method: `POST`
-- Content-Type: `application/x-ndjson`
-- Headers:
-  - `x-bepless-project-id`
-  - `x-bepless-build-id`
-  - `x-bepless-invocation-id`
+When `BEPLESS_HTTP_SINK_URL` is set to the worker ingest URL, for example
+`https://bepless.hawkingrei.com/ingest`, `grpc-ingest` now derives:
 
-Each NDJSON line is a normalized wrapper that contains:
+- chunk upload URL: `https://bepless.hawkingrei.com/ingest-chunks`
+- finalize URL: `https://bepless.hawkingrei.com/ingest-finalize`
+
+It then:
+
+1. renders one normalized NDJSON line per BES event
+2. groups those lines into request chunks capped by `BEPLESS_HTTP_SINK_CHUNK_BYTES`
+3. uploads each chunk to the worker chunk ingress
+4. calls the finalize endpoint once all chunks are stored
+
+Each NDJSON line inside the chunk bodies still contains:
 
 - `project_id`
 - `build_id`
 - `invocation_id`
 - `sequence_number`
+- `notification_keywords`
 - `bazel_event_proto_base64`
-
-The payload is base64-encoded Bazel `build_event_stream.BuildEvent` protobuf bytes.
 
 It still intentionally does not include:
 

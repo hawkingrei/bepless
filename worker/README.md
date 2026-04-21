@@ -17,6 +17,8 @@ This directory intentionally contains no deployment secrets.
 - `GET /api/reviews/:id`: returns one stored review, including the normalized NDJSON used for browser-side rendering
 - `POST /analyze`: accepts Bazel BEP NDJSON and returns an analysis summary
 - `POST /ingest`: accepts NDJSON envelopes emitted by `grpc-ingest`, normalizes them, stores the latest 50 reviews in D1, and returns the analysis payload
+- `POST /ingest-chunks`: accepts one chunk of NDJSON envelopes and stores it in R2
+- `POST /ingest-finalize`: reassembles stored chunks from R2, analyzes the invocation, stores the final review in D1, and deletes the temporary chunk objects
 
 ## `/ingest` format
 
@@ -37,6 +39,42 @@ The worker decodes the protobuf payload, maps the supported BEP subset into the 
 shape, persists a normalized NDJSON copy in D1, and returns the same summary/findings response
 schema as `/analyze`.
 
+## Chunked `/ingest` format
+
+Large invocations can exceed the single-request body size accepted by Workers. The chunked path
+keeps the worker as an R2-backed ingest coordinator:
+
+1. `grpc-ingest` uploads multiple smaller chunks to `POST /ingest-chunks`
+2. each chunk is stored in R2 under the invocation ID
+3. `POST /ingest-finalize` fetches all chunks, reassembles the original NDJSON body, runs the
+   analyzer, stores one final review row in D1, and removes the temporary R2 objects
+
+Chunk upload request:
+
+```json
+{
+  "project_id": "example-project",
+  "build_id": "example-build",
+  "invocation_id": "example-invocation",
+  "chunk_index": 0,
+  "chunk_count": 4,
+  "notification_keywords": ["source:ci"],
+  "chunk_body": "{\"project_id\":\"...\"}\n{\"project_id\":\"...\"}"
+}
+```
+
+Finalize request:
+
+```json
+{
+  "project_id": "example-project",
+  "build_id": "example-build",
+  "invocation_id": "example-invocation",
+  "chunk_count": 4,
+  "notification_keywords": ["source:ci"]
+}
+```
+
 ## D1 Binding
 
 The worker expects a D1 binding named `BEPLESS_DB`.
@@ -51,6 +89,18 @@ Recommended Wrangler shape:
 binding = "BEPLESS_DB"
 database_name = "bepless"
 database_id = "<your-d1-database-id>"
+```
+
+## R2 Binding
+
+The chunked ingestion path expects an R2 bucket binding named `BEPLESS_CHUNKS`.
+
+Recommended Wrangler shape:
+
+```toml
+[[r2_buckets]]
+binding = "BEPLESS_CHUNKS"
+bucket_name = "<your-r2-bucket-name>"
 ```
 
 ## D1 Migration

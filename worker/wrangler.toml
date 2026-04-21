@@ -29,6 +29,10 @@ database_name = "bepless"
 database_id = "2852ef44-b71c-4b91-8583-6ea20253c5b2"
 preview_database_id = "2852ef44-b71c-4b91-8583-6ea20253c5b2"
 
+[[r2_buckets]]
+binding = "BEPLESS_CHUNKS"
+bucket_name = "bepless"
+
 [env.dev]
 name = "bep-analyzer-worker-dev"
 
@@ -53,6 +57,10 @@ database_name = "bepless"
 database_id = "2852ef44-b71c-4b91-8583-6ea20253c5b2"
 preview_database_id = "2852ef44-b71c-4b91-8583-6ea20253c5b2"
 
+[[env.dev.r2_buckets]]
+binding = "BEPLESS_CHUNKS"
+bucket_name = "bepless"
+
 [env.production]
 name = "bep-analyzer-worker"
 
@@ -76,3 +84,7 @@ binding = "BEPLESS_DB"
 database_name = "bepless"
 database_id = "2852ef44-b71c-4b91-8583-6ea20253c5b2"
 preview_database_id = "2852ef44-b71c-4b91-8583-6ea20253c5b2"
+
+[[env.production.r2_buckets]]
+binding = "BEPLESS_CHUNKS"
+bucket_name = "bepless"

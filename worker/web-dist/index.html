@@ -193,6 +193,114 @@ button.secondary:hover {
   background: var(--accent-strong);
 }
 
+.timeline-summary {
+  margin-top: 12px;
+}
+
+.timeline-toolbar {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px 18px;
+  align-items: center;
+}
+
+.timeline-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.timeline-filter-button-active {
+  background: var(--accent);
+  color: white;
+}
+
+.timeline-filter-button-active:hover {
+  background: var(--accent-strong);
+}
+
+.timeline-limit-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font: 12px/1.4 "IBM Plex Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.timeline-limit-label select {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  padding: 8px 12px;
+  font: inherit;
+}
+
+.timeline-chart {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.timeline-row {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) 92px;
+  gap: 12px;
+  align-items: center;
+}
+
+.timeline-row-build {
+  margin-bottom: 4px;
+}
+
+.timeline-label,
+.timeline-meta {
+  font: 12px/1.4 "IBM Plex Mono", monospace;
+}
+
+.timeline-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.timeline-track {
+  position: relative;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(27, 28, 29, 0.08);
+  overflow: hidden;
+}
+
+.timeline-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  min-width: 2px;
+  background: var(--timeline-bar-color, rgba(11, 110, 79, 0.72));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.timeline-bar-build {
+  background: rgba(11, 110, 79, 0.32);
+}
+
+.timeline-bar-success {
+  opacity: 0.96;
+}
+
+.timeline-bar-failed {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 0 0 1px rgba(153, 27, 27, 0.22);
+}
+
 .section-heading {
   display: flex;
   justify-content: space-between;
@@ -427,6 +535,19 @@ li {
   .grid-span-2 {
     grid-column: auto;
   }
+
+  .timeline-toolbar {
+    align-items: stretch;
+  }
+
+  .timeline-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .timeline-meta {
+    text-align: right;
+  }
 }
 
     </style>
@@ -500,6 +621,7 @@ li {
 
             <section class="tab-strip panel">
               <button class="tab-button tab-button-active" data-tab="summary" type="button">Summary</button>
+              <button class="tab-button" data-tab="timeline" type="button">Timeline</button>
               <button class="tab-button" data-tab="runtime" type="button">Runtime</button>
               <button class="tab-button" data-tab="hotspots" type="button">Hotspots</button>
               <button class="tab-button" data-tab="execution" type="button">Execution</button>
@@ -526,6 +648,41 @@ li {
                   </ul>
                 </section>
               </div>
+            </section>
+
+            <section class="section-block tab-panel" data-tab-panel="timeline">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Chronology</p>
+                  <h2>Wall-Time Timeline</h2>
+                </div>
+              </div>
+              <section class="panel">
+                <p class="section-copy">
+                  Timeline bars are ordered by actual start time. The chart shows the build span and
+                  the longest actions with absolute timestamps present in BEP.
+                </p>
+                <div class="timeline-toolbar">
+                  <div class="timeline-filters" id="timeline-filters">
+                    <button class="secondary compact timeline-filter-button timeline-filter-button-active" data-timeline-filter="longest" type="button">Longest</button>
+                    <button class="secondary compact timeline-filter-button" data-timeline-filter="all" type="button">All</button>
+                    <button class="secondary compact timeline-filter-button" data-timeline-filter="failed" type="button">Failed</button>
+                    <button class="secondary compact timeline-filter-button" data-timeline-filter="compile" type="button">Compile</button>
+                  </div>
+                  <label class="timeline-limit-label" for="timeline-limit">
+                    <span>Rows</span>
+                    <select id="timeline-limit">
+                      <option value="12">12</option>
+                      <option value="24" selected>24</option>
+                      <option value="48">48</option>
+                    </select>
+                  </label>
+                </div>
+                <div id="timeline-summary" class="timeline-summary muted">No uploaded reviews yet.</div>
+                <div id="timeline-chart" class="timeline-chart">
+                  <div class="muted">No uploaded reviews yet.</div>
+                </div>
+              </section>
             </section>
 
             <section class="section-block tab-panel" data-tab-panel="runtime">
@@ -695,6 +852,10 @@ li {
   var sinkConfig = document.getElementById("sink-config");
   var summaryGrid = document.getElementById("summary-grid");
   var keywordList = document.getElementById("keyword-list");
+  var timelineSummary = document.getElementById("timeline-summary");
+  var timelineChart = document.getElementById("timeline-chart");
+  var timelineFilterButtons = Array.from(document.querySelectorAll("[data-timeline-filter]"));
+  var timelineLimit = document.getElementById("timeline-limit");
   var hostJvmArgsList = document.getElementById("host-jvm-args-list");
   var jvmMetricsList = document.getElementById("jvm-metrics-list");
   var timingMetricsList = document.getElementById("timing-metrics-list");
@@ -717,6 +878,7 @@ li {
   var currentReviewId = null;
   var activeTab = "summary";
   var activeFlakyLabel = null;
+  var activeTimelineFilter = "longest";
   window.__lastBrowserInsights = null;
   function currentInvocationPath() {
     const trimmed = window.location.pathname.replace(/^\/+|\/+$/g, "");
@@ -739,6 +901,12 @@ li {
     }
     for (const panel of tabPanels) {
       panel.classList.toggle("hidden", panel.dataset.tabPanel !== tab);
+    }
+  }
+  function setActiveTimelineFilter(filter) {
+    activeTimelineFilter = filter;
+    for (const button of timelineFilterButtons) {
+      button.classList.toggle("timeline-filter-button-active", button.dataset.timelineFilter === filter);
     }
   }
   function formatMs(value) {
@@ -852,11 +1020,25 @@ li {
     const totalRunCount = toNumber(test.total_run_count);
     return attemptCount !== null && attemptCount > 1 || totalRunCount !== null && totalRunCount > 1;
   }
+  function hashString(value) {
+    let hash = 0;
+    for (const char of String(value || "")) {
+      hash = (hash * 31 + char.charCodeAt(0)) % 360;
+    }
+    return hash;
+  }
+  function mnemonicColor(mnemonic, success) {
+    const hue = hashString(mnemonic);
+    const saturation = success ? 64 : 72;
+    const lightness = success ? 42 : 38;
+    return `hsl(${hue} ${saturation}% ${lightness}%)`;
+  }
   function summarizeBrowserInsights(input) {
     const compileItems = [];
     const ioItems = [];
     const testExecutionWallItems = [];
     const slowActions = [];
+    const timelineActions = [];
     const tests = [];
     const flakyTests = [];
     const flakyAttemptsByLabel = /* @__PURE__ */ new Map();
@@ -866,6 +1048,7 @@ li {
     let jvmMetrics = null;
     let timingMetrics = null;
     let networkMetrics = null;
+    let invocationWindow = null;
     const workerMetrics = [];
     for (const rawLine of input.split("\n")) {
       const line = rawLine.trim();
@@ -978,6 +1161,30 @@ li {
           command_preview: commandLine.join(" "),
           failure_detail: action.failureDetail || ""
         });
+        if (startTimeMs !== null && endTimeMs !== null) {
+          timelineActions.push({
+            label: actionId.label || "<unknown>",
+            mnemonic: action.type || "unknown",
+            start_ms: startTimeMs,
+            end_ms: endTimeMs,
+            duration_ms: Math.max(0, endTimeMs - startTimeMs),
+            success: action.success
+          });
+        }
+      }
+      if (event.started) {
+        const startMs = toNumber(event.started.startTimeMillis);
+        if (startMs !== null) {
+          invocationWindow = invocationWindow || {};
+          invocationWindow.started_at_ms = startMs;
+        }
+      }
+      if (event.finished) {
+        const endMs = toNumber(event.finished.finishTimeMillis);
+        if (endMs !== null) {
+          invocationWindow = invocationWindow || {};
+          invocationWindow.finished_at_ms = endMs;
+        }
       }
       if (event.id && event.id.testSummary && event.testSummary) {
         const summary = event.testSummary;
@@ -1040,6 +1247,8 @@ li {
       jvmMetrics,
       timingMetrics,
       networkMetrics,
+      invocationWindow,
+      timelineActions: timelineActions.sort((left, right) => left.start_ms - right.start_ms || right.duration_ms - left.duration_ms).slice(0, 60),
       workerMetrics: workerMetrics.sort((left, right) => (right.worker_memory_kb ?? -1) - (left.worker_memory_kb ?? -1)).slice(0, 10),
       cacheMissReasons: Array.from(cacheMissReasons.entries()).sort((left, right) => right[1] - left[1]),
       topCompileItems: compileItems.slice(0, 10),
@@ -1050,6 +1259,80 @@ li {
       flakyTests: flakyTests.slice(0, 10),
       flakyAttemptsByLabel
     };
+  }
+  function renderTimeline(insights) {
+    const actions = insights.timelineActions || [];
+    const startCandidates = [];
+    const endCandidates = [];
+    if (insights.invocationWindow?.started_at_ms !== null && insights.invocationWindow?.started_at_ms !== void 0) {
+      startCandidates.push(insights.invocationWindow.started_at_ms);
+    }
+    if (insights.invocationWindow?.finished_at_ms !== null && insights.invocationWindow?.finished_at_ms !== void 0) {
+      endCandidates.push(insights.invocationWindow.finished_at_ms);
+    }
+    for (const action of actions) {
+      startCandidates.push(action.start_ms);
+      endCandidates.push(action.end_ms);
+    }
+    if (startCandidates.length === 0 || endCandidates.length === 0) {
+      timelineSummary.textContent = "No absolute wall-time markers in this BEP.";
+      timelineChart.innerHTML = '<div class="muted">No action or invocation timestamps found.</div>';
+      return;
+    }
+    const rangeStart = Math.min(...startCandidates);
+    const rangeEnd = Math.max(...endCandidates);
+    const totalMs = Math.max(1, rangeEnd - rangeStart);
+    const rowLimit = Math.max(1, Number(timelineLimit?.value || 24));
+    let filteredActions = actions.slice();
+    if (activeTimelineFilter === "failed") {
+      filteredActions = filteredActions.filter((item) => item.success === false);
+    } else if (activeTimelineFilter === "compile") {
+      filteredActions = filteredActions.filter((item) => isCompileMnemonic(item.mnemonic));
+    }
+    let visibleActions;
+    if (activeTimelineFilter === "all") {
+      visibleActions = filteredActions.slice().sort((left, right) => left.start_ms - right.start_ms || right.duration_ms - left.duration_ms).slice(0, rowLimit);
+    } else {
+      visibleActions = filteredActions.slice().sort((left, right) => right.duration_ms - left.duration_ms || left.start_ms - right.start_ms).slice(0, rowLimit).sort((left, right) => left.start_ms - right.start_ms || right.duration_ms - left.duration_ms);
+    }
+    const filterLabel = {
+      longest: "Longest",
+      all: "Earliest",
+      failed: "Failed",
+      compile: "Compile"
+    }[activeTimelineFilter] || "Longest";
+    timelineSummary.textContent = `Start ${new Date(rangeStart).toLocaleString()} \xB7 End ${new Date(rangeEnd).toLocaleString()} \xB7 Span ${formatMs(totalMs)} \xB7 Showing ${visibleActions.length}/${actions.length} ${filterLabel.toLowerCase()} actions`;
+    const bars = [];
+    if (insights.invocationWindow?.started_at_ms !== null && insights.invocationWindow?.finished_at_ms !== null) {
+      const left = (insights.invocationWindow.started_at_ms - rangeStart) / totalMs * 100;
+      const width = (insights.invocationWindow.finished_at_ms - insights.invocationWindow.started_at_ms) / totalMs * 100;
+      bars.push(`
+      <div class="timeline-row timeline-row-build">
+        <div class="timeline-label">build</div>
+        <div class="timeline-track">
+          <div class="timeline-bar timeline-bar-build" style="left:${left}%; width:${Math.max(width, 0.8)}%"></div>
+        </div>
+        <div class="timeline-meta">${formatMs(insights.invocationWindow.finished_at_ms - insights.invocationWindow.started_at_ms)}</div>
+      </div>
+    `);
+    }
+    for (const action of visibleActions) {
+      const left = (action.start_ms - rangeStart) / totalMs * 100;
+      const width = (action.end_ms - action.start_ms) / totalMs * 100;
+      const mnemonic = escapeHtml(action.mnemonic);
+      const label = escapeHtml(action.label);
+      const color = mnemonicColor(action.mnemonic, action.success);
+      bars.push(`
+      <div class="timeline-row">
+        <div class="timeline-label" title="${label}">${mnemonic}</div>
+        <div class="timeline-track">
+          <div class="timeline-bar ${action.success ? "timeline-bar-success" : "timeline-bar-failed"}" style="--timeline-bar-color:${color}; left:${left}%; width:${Math.max(width, 0.8)}%" title="${label} \xB7 ${mnemonic} \xB7 ${formatMs(action.duration_ms)}"></div>
+        </div>
+        <div class="timeline-meta">${formatMs(action.duration_ms)}</div>
+      </div>
+    `);
+    }
+    timelineChart.innerHTML = bars.join("");
   }
   function createListItems(container, items, render, emptyText) {
     if (!items || items.length === 0) {
@@ -1097,6 +1380,7 @@ li {
     if (!activeFlakyLabel && insights.flakyTests.length > 0) {
       activeFlakyLabel = insights.flakyTests[0].label;
     }
+    renderTimeline(insights);
     createListItems(
       hostJvmArgsList,
       insights.hostJvmArgs,
@@ -1411,6 +1695,8 @@ li {
     activeFlakyLabel = null;
     summaryGrid.innerHTML = "";
     keywordList.innerHTML = `<li class="muted">${message}</li>`;
+    timelineSummary.textContent = message;
+    timelineChart.innerHTML = `<div class="muted">${message}</div>`;
     hostJvmArgsList.innerHTML = `<li class="muted">${message}</li>`;
     jvmMetricsList.innerHTML = `<li class="muted">${message}</li>`;
     timingMetricsList.innerHTML = `<li class="muted">${message}</li>`;
@@ -1574,6 +1860,19 @@ li {
       setActiveTab(button.dataset.tab || "summary");
     });
   }
+  for (const button of timelineFilterButtons) {
+    button.addEventListener("click", () => {
+      setActiveTimelineFilter(button.dataset.timelineFilter || "longest");
+      if (window.__lastBrowserInsights) {
+        renderTimeline(window.__lastBrowserInsights);
+      }
+    });
+  }
+  timelineLimit?.addEventListener("change", () => {
+    if (window.__lastBrowserInsights) {
+      renderTimeline(window.__lastBrowserInsights);
+    }
+  });
   historyList.addEventListener("click", async (event) => {
     const item = event.target.closest("[data-review-id]");
     if (!item) return;
@@ -1599,6 +1898,7 @@ li {
   });
   boot();
   setActiveTab(activeTab);
+  setActiveTimelineFilter(activeTimelineFilter);
 })();
 
     </script>
