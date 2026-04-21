@@ -7,6 +7,7 @@ use prost::Message;
 use prost_types::{Duration as ProtoDuration, Timestamp as ProtoTimestamp};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use worker::js_sys::Date;
 use worker::wasm_bindgen::JsValue;
 use worker::{
     console_error, console_log, event, Bucket, Context, D1Database, FormEntry, Method, Request,
@@ -99,6 +100,8 @@ struct IngestFinalizeRequest {
     chunk_count: u32,
     #[serde(default)]
     notification_keywords: Vec<String>,
+    #[serde(default)]
+    normalized_object_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -112,7 +115,9 @@ struct IngestChunkAck {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Summary {
     invocation_id: Option<String>,
+    invocation_source: Option<String>,
     command: Option<String>,
+    command_source: Option<String>,
     bazel_version: Option<String>,
     success: Option<bool>,
     exit_code: Option<String>,
@@ -214,7 +219,9 @@ struct StoredReviewRow {
 #[derive(Debug, Default)]
 struct AnalyzerState {
     invocation_id: Option<String>,
+    invocation_source: Option<String>,
     command: Option<String>,
+    command_source: Option<String>,
     bazel_version: Option<String>,
     success: Option<bool>,
     exit_code: Option<String>,
@@ -245,6 +252,7 @@ struct AnalyzerState {
 impl AnalyzerState {
     fn ingest(&mut self, event: &Value) {
         self.ingest_started(event);
+        self.ingest_options_parsed(event);
         self.ingest_finished(event);
         self.ingest_progress(event);
         self.ingest_target_configured(event);
@@ -260,15 +268,38 @@ impl AnalyzerState {
             None => return,
         };
 
-        self.invocation_id
-            .get_or_insert_with(|| string_at(started, &["uuid"]).unwrap_or_default());
-        self.command
-            .get_or_insert_with(|| string_at(started, &["command"]).unwrap_or_default());
+        if self.invocation_id.is_none() {
+            if let Some(invocation_id) = take_non_empty(string_at(started, &["uuid"])) {
+                self.invocation_id = Some(invocation_id);
+                self.invocation_source = Some("started.uuid".to_string());
+            }
+        }
+        if self.command.is_none() {
+            if let Some(command) = take_non_empty(string_at(started, &["command"])) {
+                self.command = Some(command);
+                self.command_source = Some("started.command".to_string());
+            }
+        }
         self.bazel_version
             .get_or_insert_with(|| string_at(started, &["buildToolVersion"]).unwrap_or_default());
         self.started_at_ms = self
             .started_at_ms
             .or_else(|| u64_at(started, &["startTimeMillis"]));
+    }
+
+    fn ingest_options_parsed(&mut self, event: &Value) {
+        let Some(options) = pointer(event, &["optionsParsed"]) else {
+            return;
+        };
+
+        if self.command.is_some() {
+            return;
+        }
+
+        if let Some(command) = infer_command_from_options(options) {
+            self.command = Some(command);
+            self.command_source = Some("optionsParsed.cmdLine".to_string());
+        }
     }
 
     fn ingest_finished(&mut self, event: &Value) {
@@ -455,7 +486,9 @@ impl AnalyzerState {
 
         let summary = Summary {
             invocation_id: take_non_empty(self.invocation_id),
+            invocation_source: take_non_empty(self.invocation_source),
             command: take_non_empty(self.command),
+            command_source: take_non_empty(self.command_source),
             bazel_version: take_non_empty(self.bazel_version),
             success: self.success,
             exit_code: take_non_empty(self.exit_code),
@@ -555,9 +588,10 @@ async fn ingest_request(req: &mut Request, env: &worker::Env) -> Result<Response
         .map_err(|_| worker::Error::RustError("Request body is not valid UTF-8".into()))?;
     let normalized =
         normalize_ingest_ndjson(&content).map_err(|message| worker::Error::RustError(message))?;
-    let result =
-        analyze_ndjson(&normalized).map_err(|message| worker::Error::RustError(message))?;
-    store_ingest_review(env, &content, &normalized, &result).await?;
+    let metadata = extract_ingest_metadata(&content);
+    let result = build_lightweight_analysis(&metadata);
+    let uploaded_at_ms = Date::now() as i64;
+    store_ingest_review(env, &content, &normalized, &result, uploaded_at_ms).await?;
     log_info(
         "ingest_request_stored",
         vec![
@@ -655,6 +689,45 @@ async fn ingest_finalize_request(req: &mut Request, env: &worker::Env) -> Result
         return apply_cors(response);
     }
 
+    if let Some(normalized_object_key) = payload
+        .normalized_object_key
+        .clone()
+        .and_then(non_empty_string)
+    {
+        let metadata = IngestMetadata {
+            project_id: non_empty_string(payload.project_id.clone()),
+            build_id: non_empty_string(payload.build_id.clone()),
+            invocation_id: non_empty_string(payload.invocation_id.clone()),
+            notification_keywords: payload.notification_keywords.clone(),
+        };
+        let result = build_lightweight_analysis(&metadata);
+        let uploaded_at_ms = Date::now() as i64;
+        store_ingest_review_pointer(
+            env,
+            &metadata,
+            format!("{REVIEW_BODY_POINTER_PREFIX}{normalized_object_key}"),
+            &result,
+            uploaded_at_ms,
+        )
+        .await?;
+
+        log_info(
+            "ingest_finalize_completed",
+            vec![
+                ("invocation_id", payload.invocation_id.clone()),
+                ("build_id", payload.build_id.clone()),
+                ("project_id", payload.project_id.clone()),
+                ("normalized_object_key", normalized_object_key),
+            ],
+        );
+
+        let mut response = Response::from_json(&result)?;
+        response
+            .headers_mut()
+            .set("content-type", "application/json; charset=utf-8")?;
+        return apply_cors(response);
+    }
+
     let bucket = open_chunk_bucket(env)?;
     let mut chunk_bodies = Vec::with_capacity(payload.chunk_count as usize);
     for chunk_index in 0..payload.chunk_count {
@@ -684,9 +757,22 @@ async fn ingest_finalize_request(req: &mut Request, env: &worker::Env) -> Result
     let raw_ingest_body = chunk_bodies.join("\n");
     let normalized = normalize_ingest_ndjson(&raw_ingest_body)
         .map_err(|message| worker::Error::RustError(message))?;
-    let result =
-        analyze_ndjson(&normalized).map_err(|message| worker::Error::RustError(message))?;
-    store_ingest_review(env, &raw_ingest_body, &normalized, &result).await?;
+    let mut metadata = extract_ingest_metadata(&raw_ingest_body);
+    if metadata.project_id.is_none() {
+        metadata.project_id = non_empty_string(payload.project_id.clone());
+    }
+    if metadata.build_id.is_none() {
+        metadata.build_id = non_empty_string(payload.build_id.clone());
+    }
+    if metadata.invocation_id.is_none() {
+        metadata.invocation_id = non_empty_string(payload.invocation_id.clone());
+    }
+    if metadata.notification_keywords.is_empty() {
+        metadata.notification_keywords = payload.notification_keywords.clone();
+    }
+    let result = build_lightweight_analysis(&metadata);
+    let uploaded_at_ms = Date::now() as i64;
+    store_ingest_review(env, &raw_ingest_body, &normalized, &result, uploaded_at_ms).await?;
 
     let delete_keys = (0..payload.chunk_count)
         .map(|chunk_index| chunk_object_key(&payload.invocation_id, chunk_index))
@@ -942,25 +1028,36 @@ async fn store_ingest_review(
     raw_ingest_body: &str,
     normalized_ingest_body: &str,
     analysis: &AnalysisResponse,
+    uploaded_at_ms: i64,
 ) -> Result<()> {
-    let db = open_database(env)?;
-
     let metadata = extract_ingest_metadata(raw_ingest_body);
-    let uploaded_at_ms = analysis
-        .summary
-        .finished_at_ms
-        .or(analysis.summary.started_at_ms)
-        .map(|value| value as i64)
-        .unwrap_or(0);
-    let analysis_json = serde_json::to_string(analysis).map_err(|err| {
-        worker::Error::RustError(format!("Failed to serialize analysis payload: {}", err))
-    })?;
     let review_body_pointer = store_review_body(
         env,
         metadata.invocation_id.as_deref(),
         normalized_ingest_body,
     )
     .await?;
+    store_ingest_review_pointer(
+        env,
+        &metadata,
+        review_body_pointer,
+        analysis,
+        uploaded_at_ms,
+    )
+    .await
+}
+
+async fn store_ingest_review_pointer(
+    env: &worker::Env,
+    metadata: &IngestMetadata,
+    review_body_pointer: String,
+    analysis: &AnalysisResponse,
+    uploaded_at_ms: i64,
+) -> Result<()> {
+    let db = open_database(env)?;
+    let analysis_json = serde_json::to_string(analysis).map_err(|err| {
+        worker::Error::RustError(format!("Failed to serialize analysis payload: {}", err))
+    })?;
     let notification_keywords_json = serde_json::to_string(&metadata.notification_keywords)
         .map_err(|err| {
             worker::Error::RustError(format!(
@@ -982,7 +1079,6 @@ async fn store_ingest_review(
             ),
             ("build_id", metadata.build_id.clone().unwrap_or_default()),
             ("notification_keywords", notification_keywords_json.clone()),
-            ("normalized_bytes", normalized_ingest_body.len().to_string()),
             ("review_body_pointer", review_body_pointer.clone()),
         ],
     );
@@ -1133,7 +1229,14 @@ fn validate_finalize_request(payload: &IngestFinalizeRequest) -> Result<()> {
             "ingest finalize invocation_id must not be empty".into(),
         ));
     }
-    if payload.chunk_count == 0 {
+    if payload
+        .normalized_object_key
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .is_empty()
+        && payload.chunk_count == 0
+    {
         return Err(worker::Error::RustError(
             "ingest finalize chunk_count must be positive".into(),
         ));
@@ -1248,6 +1351,49 @@ fn extract_ingest_metadata(input: &str) -> IngestMetadata {
     IngestMetadata::default()
 }
 
+fn build_lightweight_analysis(metadata: &IngestMetadata) -> AnalysisResponse {
+    AnalysisResponse {
+        summary: Summary {
+            invocation_id: metadata.invocation_id.clone(),
+            invocation_source: metadata
+                .invocation_id
+                .as_ref()
+                .map(|_| "ingest.invocation_id".to_string()),
+            command: None,
+            command_source: None,
+            bazel_version: None,
+            success: None,
+            exit_code: None,
+            started_at_ms: None,
+            finished_at_ms: None,
+            elapsed_ms: None,
+            critical_path_ms: None,
+            wall_time_ms: None,
+            cpu_time_ms: None,
+            analysis_phase_ms: None,
+            execution_phase_ms: None,
+            configured_targets: 0,
+            configured_test_targets: 0,
+            completed_targets: 0,
+            failed_targets: 0,
+            test_summaries: 0,
+            failed_tests: 0,
+            total_actions: None,
+            remote_cache_hits: None,
+            action_cache_hits: None,
+            action_cache_misses: None,
+            cache_hit_ratio: None,
+        },
+        slowest_tests: Vec::new(),
+        failed_targets: Vec::new(),
+        top_action_mnemonics: Vec::new(),
+        runner_counts: BTreeMap::new(),
+        test_strategy_counts: BTreeMap::new(),
+        timing_breakdown_ms: BTreeMap::new(),
+        findings: Vec::new(),
+    }
+}
+
 #[derive(Debug, Default)]
 struct IngestMetadata {
     project_id: Option<String>,
@@ -1263,6 +1409,39 @@ fn parse_keywords_json(input: &str) -> Result<Vec<String>> {
             err
         ))
     })
+}
+
+fn infer_command_from_options(options: &Value) -> Option<String> {
+    for key in ["cmdLine", "explicitCmdLine"] {
+        let Some(entries) = array_at(options, &[key]) else {
+            continue;
+        };
+
+        for entry in entries {
+            if let Some(command) = entry.as_str().and_then(parse_command_token) {
+                return Some(command.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn parse_command_token(value: &str) -> Option<&'static str> {
+    match value {
+        "build" => Some("build"),
+        "test" => Some("test"),
+        "run" => Some("run"),
+        "query" => Some("query"),
+        "cquery" => Some("cquery"),
+        "aquery" => Some("aquery"),
+        "coverage" => Some("coverage"),
+        "fetch" => Some("fetch"),
+        "mobile-install" => Some("mobile-install"),
+        "info" => Some("info"),
+        "clean" => Some("clean"),
+        _ => None,
+    }
 }
 
 fn log_info(event_name: &str, fields: Vec<(&str, String)>) {

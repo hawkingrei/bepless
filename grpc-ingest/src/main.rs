@@ -1,10 +1,14 @@
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
+use aws_config::BehaviorVersion;
+use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use flate2::{write::GzEncoder, Compression};
 use prost::Message;
 use prost_types::Any;
+use prost_types::{Duration as ProtoDuration, Timestamp as ProtoTimestamp};
 use serde::Serialize;
+use serde_json::{json, Map, Value};
 use std::io::Write;
 use tokio::{signal, sync::mpsc, time::sleep};
 use tokio_stream::wrappers::ReceiverStream;
@@ -80,6 +84,22 @@ struct NormalizedBuildEvent<'a> {
     bazel_event_proto_base64: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct BufferedBuildEvent {
+    #[allow(dead_code)]
+    project_id: String,
+    #[allow(dead_code)]
+    build_id: String,
+    #[allow(dead_code)]
+    invocation_id: String,
+    #[allow(dead_code)]
+    sequence_number: i64,
+    #[allow(dead_code)]
+    #[serde(default)]
+    notification_keywords: Vec<String>,
+    bazel_event_proto_base64: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct ChunkUploadRequest<'a> {
     project_id: &'a str,
@@ -99,6 +119,14 @@ struct FinalizeUploadRequest<'a> {
     invocation_id: &'a str,
     chunk_count: u32,
     notification_keywords: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    normalized_object_key: Option<&'a str>,
+}
+
+#[derive(Debug, Clone)]
+struct R2UploadConfig {
+    bucket_name: String,
+    client: S3Client,
 }
 
 #[derive(Debug, Clone)]
@@ -108,11 +136,56 @@ struct HttpSinkConfig {
     max_retries: usize,
     retry_backoff: Duration,
     chunk_bytes: usize,
+    r2_upload: Option<R2UploadConfig>,
 }
 
-impl Default for HttpSinkConfig {
-    fn default() -> Self {
-        Self {
+impl R2UploadConfig {
+    async fn from_env() -> Result<Option<Self>, String> {
+        let bucket_name = env::var("BEPLESS_R2_BUCKET")
+            .ok()
+            .filter(|value| !value.is_empty());
+        let endpoint_url = env::var("BEPLESS_R2_ENDPOINT")
+            .ok()
+            .filter(|value| !value.is_empty());
+        let access_key_id = env::var("BEPLESS_R2_ACCESS_KEY_ID")
+            .ok()
+            .filter(|value| !value.is_empty());
+        let secret_access_key = env::var("BEPLESS_R2_SECRET_ACCESS_KEY")
+            .ok()
+            .filter(|value| !value.is_empty());
+
+        match (bucket_name, endpoint_url, access_key_id, secret_access_key) {
+            (Some(bucket_name), Some(endpoint_url), Some(access_key_id), Some(secret_access_key)) => {
+                let config = aws_config::defaults(BehaviorVersion::latest())
+                    .endpoint_url(endpoint_url)
+                    .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                        access_key_id,
+                        secret_access_key,
+                        None,
+                        None,
+                        "R2",
+                    ))
+                    .region("auto")
+                    .load()
+                    .await;
+
+                Ok(Some(Self {
+                    bucket_name,
+                    client: S3Client::new(&config),
+                }))
+            }
+            (None, None, None, None) => Ok(None),
+            _ => Err(
+                "incomplete R2 upload configuration; set BEPLESS_R2_BUCKET, BEPLESS_R2_ENDPOINT, BEPLESS_R2_ACCESS_KEY_ID, and BEPLESS_R2_SECRET_ACCESS_KEY"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
+impl HttpSinkConfig {
+    async fn load() -> Result<Self, String> {
+        Ok(Self {
             endpoint_url: env::var("BEPLESS_HTTP_SINK_URL")
                 .ok()
                 .filter(|value| !value.is_empty()),
@@ -136,11 +209,10 @@ impl Default for HttpSinkConfig {
                 .ok()
                 .and_then(|value| value.parse::<usize>().ok())
                 .unwrap_or(512 * 1024),
-        }
+            r2_upload: R2UploadConfig::from_env().await?,
+        })
     }
-}
 
-impl HttpSinkConfig {
     fn chunk_endpoint_url(&self) -> Option<String> {
         self.endpoint_url
             .as_ref()
@@ -151,26 +223,6 @@ impl HttpSinkConfig {
         self.endpoint_url
             .as_ref()
             .map(|value| derive_sink_url(value, "/ingest", "/ingest-finalize"))
-    }
-
-    fn render_ndjson_line(
-        &self,
-        project_id: &str,
-        stream_id: &StreamId,
-        sequence_number: i64,
-        notification_keywords: &[String],
-        payload: &[u8],
-    ) -> Result<String, Status> {
-        let line = NormalizedBuildEvent {
-            project_id,
-            build_id: stream_id.build_id.as_str(),
-            invocation_id: stream_id.invocation_id.as_str(),
-            sequence_number,
-            notification_keywords,
-            bazel_event_proto_base64: BASE64_STANDARD.encode(payload),
-        };
-        serde_json::to_string(&line)
-            .map_err(|err| Status::internal(format!("failed to encode ndjson line: {err}")))
     }
 
     async fn flush(
@@ -189,6 +241,62 @@ impl HttpSinkConfig {
                 .timeout(self.timeout)
                 .build()
                 .map_err(|err| format!("failed to build http sink client: {err}"))?;
+
+            if let Some(r2_upload) = &self.r2_upload {
+                let body = normalize_ingest_lines(lines).map_err(|err| {
+                    format!("failed to normalize invocation before R2 upload: {err}")
+                })?;
+                let normalized_object_key = normalized_object_key(stream_id.invocation_id.as_str());
+                r2_upload
+                    .client
+                    .put_object()
+                    .bucket(&r2_upload.bucket_name)
+                    .key(&normalized_object_key)
+                    .content_type("application/x-ndjson")
+                    .body(ByteStream::from(body.into_bytes()))
+                    .send()
+                    .await
+                    .map_err(|err| {
+                        format!("failed to upload normalized invocation to R2: {err}")
+                    })?;
+
+                let finalize_endpoint = self
+                    .finalize_endpoint_url()
+                    .ok_or_else(|| "failed to derive finalize endpoint url".to_string())?;
+                let finalize = FinalizeUploadRequest {
+                    project_id,
+                    build_id: stream_id.build_id.as_str(),
+                    invocation_id: stream_id.invocation_id.as_str(),
+                    chunk_count: 0,
+                    notification_keywords,
+                    normalized_object_key: Some(&normalized_object_key),
+                };
+                let response = client
+                    .post(&finalize_endpoint)
+                    .json(&finalize)
+                    .send()
+                    .await
+                    .map_err(|err| {
+                        format!("failed to finalize normalized upload to http sink: {err}")
+                    })?;
+
+                if !response.status().is_success() {
+                    return Err(format!(
+                        "http sink finalize returned non-success status: {}",
+                        response.status()
+                    ));
+                }
+
+                info!(
+                    endpoint_url,
+                    invocation_id = stream_id.invocation_id,
+                    build_id = stream_id.build_id,
+                    object_key = normalized_object_key,
+                    line_count = lines.len(),
+                    "uploaded invocation to R2 and finalized via http sink"
+                );
+                return Ok(());
+            }
 
             let chunks = chunk_lines(lines, self.chunk_bytes);
             let chunk_count = u32::try_from(chunks.len())
@@ -233,6 +341,7 @@ impl HttpSinkConfig {
                 invocation_id: stream_id.invocation_id.as_str(),
                 chunk_count,
                 notification_keywords,
+                normalized_object_key: None,
             };
             let response = client
                 .post(&finalize_endpoint)
@@ -287,8 +396,8 @@ struct BesIngestService {
 }
 
 impl BesIngestService {
-    fn new() -> Self {
-        let sink = Arc::new(HttpSinkConfig::default());
+    async fn new() -> Result<Self, String> {
+        let sink = Arc::new(HttpSinkConfig::load().await?);
         let queue_capacity = env::var("BEPLESS_HTTP_SINK_QUEUE_CAPACITY")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
@@ -296,7 +405,7 @@ impl BesIngestService {
         let (flush_tx, flush_rx) = mpsc::channel(queue_capacity);
         tokio::spawn(run_sink_worker(Arc::clone(&sink), flush_rx));
 
-        Self { sink, flush_tx }
+        Ok(Self { sink, flush_tx })
     }
 }
 
@@ -439,7 +548,7 @@ async fn handle_stream_message(
 }
 
 fn maybe_render_ndjson_line(
-    sink: &HttpSinkConfig,
+    _sink: &HttpSinkConfig,
     project_id: &str,
     stream_id: &StreamId,
     sequence_number: i64,
@@ -452,16 +561,18 @@ fn maybe_render_ndjson_line(
     let Some(any) = extract_bazel_any(envelope) else {
         return Ok(None);
     };
-
     decode_bazel_event(Some(envelope))?;
-    sink.render_ndjson_line(
+    let line = NormalizedBuildEvent {
         project_id,
-        stream_id,
+        build_id: stream_id.build_id.as_str(),
+        invocation_id: stream_id.invocation_id.as_str(),
         sequence_number,
         notification_keywords,
-        any.value.as_slice(),
-    )
-    .map(Some)
+        bazel_event_proto_base64: BASE64_STANDARD.encode(any.value.as_slice()),
+    };
+    serde_json::to_string(&line)
+        .map(Some)
+        .map_err(|err| Status::internal(format!("failed to encode ndjson line: {err}")))
 }
 
 fn enqueue_invocation(flush_tx: mpsc::Sender<PendingInvocation>, pending: PendingInvocation) {
@@ -554,6 +665,34 @@ fn derive_sink_url(endpoint_url: &str, from_suffix: &str, to_suffix: &str) -> St
     )
 }
 
+fn normalized_object_key(invocation_id: &str) -> String {
+    format!("reviews/{invocation_id}/normalized.ndjson")
+}
+
+fn normalize_ingest_lines(lines: &[String]) -> Result<String, String> {
+    let mut normalized = Vec::new();
+
+    for (index, line) in lines.iter().enumerate() {
+        let envelope: BufferedBuildEvent = serde_json::from_str(line)
+            .map_err(|err| format!("invalid buffered ingest line {}: {err}", index + 1))?;
+        let payload = BASE64_STANDARD
+            .decode(envelope.bazel_event_proto_base64)
+            .map_err(|err| format!("invalid base64 payload at line {}: {err}", index + 1))?;
+        let event = build_event_stream::BuildEvent::decode(payload.as_slice())
+            .map_err(|err| format!("invalid BuildEvent protobuf at line {}: {err}", index + 1))?;
+        let Some(json_event) = convert_proto_event_to_json(&event) else {
+            continue;
+        };
+        normalized.push(json_event.to_string());
+    }
+
+    if normalized.is_empty() {
+        return Err("no analyzable BEP events found while preparing R2 upload".to_string());
+    }
+
+    Ok(normalized.join("\n"))
+}
+
 fn chunk_lines(lines: &[String], max_chunk_bytes: usize) -> Vec<String> {
     let safe_limit = max_chunk_bytes.max(1);
     let mut chunks = Vec::new();
@@ -612,6 +751,371 @@ fn extract_bazel_any(envelope: &BesEnvelope) -> Option<&Any> {
     }
 }
 
+#[allow(deprecated)]
+fn convert_proto_event_to_json(event: &build_event_stream::BuildEvent) -> Option<Value> {
+    let mut object = Map::new();
+    object.insert("id".to_string(), convert_event_id(event.id.as_ref())?);
+
+    match event.payload.as_ref()? {
+        build_event_stream::build_event::Payload::Progress(progress) => {
+            object.insert(
+                "progress".to_string(),
+                json!({
+                    "stdout": progress.stdout,
+                    "stderr": progress.stderr,
+                }),
+            );
+        }
+        build_event_stream::build_event::Payload::OptionsParsed(options) => {
+            object.insert("optionsParsed".to_string(), convert_options_parsed(options));
+        }
+        build_event_stream::build_event::Payload::Aborted(aborted) => {
+            object.insert(
+                "aborted".to_string(),
+                json!({
+                    "reason": build_event_stream::aborted::AbortReason::try_from(aborted.reason)
+                        .ok()
+                        .map(|reason| reason.as_str_name())
+                        .unwrap_or("UNKNOWN"),
+                    "description": aborted.description,
+                }),
+            );
+        }
+        build_event_stream::build_event::Payload::Started(started) => {
+            object.insert(
+                "started".to_string(),
+                json!({
+                    "uuid": started.uuid,
+                    "startTimeMillis": proto_timestamp_to_millis(started.start_time.as_ref())
+                        .unwrap_or(started.start_time_millis)
+                        .to_string(),
+                    "buildToolVersion": started.build_tool_version,
+                    "command": started.command,
+                }),
+            );
+        }
+        build_event_stream::build_event::Payload::Configured(configured) => {
+            let mut configured_object = Map::new();
+            configured_object.insert("targetKind".to_string(), json!(configured.target_kind));
+            if configured.test_size != build_event_stream::TestSize::Unknown as i32 {
+                configured_object.insert(
+                    "testSize".to_string(),
+                    json!(build_event_stream::TestSize::try_from(configured.test_size)
+                        .ok()
+                        .map(|size| size.as_str_name())
+                        .unwrap_or("UNKNOWN")),
+                );
+            }
+            object.insert("configured".to_string(), Value::Object(configured_object));
+        }
+        build_event_stream::build_event::Payload::Completed(completed) => {
+            object.insert(
+                "completed".to_string(),
+                json!({
+                    "success": completed.success,
+                }),
+            );
+        }
+        build_event_stream::build_event::Payload::TestResult(test_result) => {
+            object.insert("testResult".to_string(), convert_test_result(test_result));
+        }
+        build_event_stream::build_event::Payload::Action(action) => {
+            object.insert("action".to_string(), convert_action_executed(action));
+        }
+        build_event_stream::build_event::Payload::TestSummary(test_summary) => {
+            object.insert(
+                "testSummary".to_string(),
+                convert_test_summary(test_summary),
+            );
+        }
+        build_event_stream::build_event::Payload::Finished(finished) => {
+            let overall_success = finished
+                .exit_code
+                .as_ref()
+                .map(|exit_code| exit_code.code == 0)
+                .unwrap_or(finished.overall_success);
+            object.insert(
+                "finished".to_string(),
+                json!({
+                    "overallSuccess": overall_success,
+                    "finishTimeMillis": proto_timestamp_to_millis(finished.finish_time.as_ref())
+                        .unwrap_or(finished.finish_time_millis)
+                        .to_string(),
+                    "exitCode": {
+                        "name": finished.exit_code.as_ref().map(|exit_code| exit_code.name.clone()).unwrap_or_default()
+                    }
+                }),
+            );
+        }
+        build_event_stream::build_event::Payload::BuildMetrics(metrics) => {
+            object.insert("buildMetrics".to_string(), convert_build_metrics(metrics));
+        }
+        _ => return None,
+    }
+
+    Some(Value::Object(object))
+}
+
+fn convert_event_id(id: Option<&build_event_stream::BuildEventId>) -> Option<Value> {
+    let id = id?.id.as_ref()?;
+    Some(match id {
+        build_event_stream::build_event_id::Id::Progress(_) => json!({ "progress": {} }),
+        build_event_stream::build_event_id::Id::Started(_) => json!({ "started": {} }),
+        build_event_stream::build_event_id::Id::BuildFinished(_) => {
+            json!({ "buildFinished": {} })
+        }
+        build_event_stream::build_event_id::Id::BuildMetrics(_) => json!({ "buildMetrics": {} }),
+        build_event_stream::build_event_id::Id::TargetConfigured(target) => json!({
+            "targetConfigured": {
+                "label": target.label,
+            }
+        }),
+        build_event_stream::build_event_id::Id::TargetCompleted(target) => json!({
+            "targetCompleted": {
+                "label": target.label,
+                "configuration": {
+                    "id": target.configuration.as_ref().map(|cfg| cfg.id.clone()).unwrap_or_default()
+                }
+            }
+        }),
+        build_event_stream::build_event_id::Id::ActionCompleted(action) => json!({
+            "actionCompleted": {
+                "label": action.label,
+                "primaryOutput": action.primary_output,
+                "configuration": {
+                    "id": action.configuration.as_ref().map(|cfg| cfg.id.clone()).unwrap_or_default()
+                }
+            }
+        }),
+        build_event_stream::build_event_id::Id::TestSummary(test) => json!({
+            "testSummary": {
+                "label": test.label,
+                "configuration": {
+                    "id": test.configuration.as_ref().map(|cfg| cfg.id.clone()).unwrap_or_default()
+                }
+            }
+        }),
+        build_event_stream::build_event_id::Id::TestResult(test) => json!({
+            "testResult": {
+                "label": test.label,
+                "configuration": {
+                    "id": test.configuration.as_ref().map(|cfg| cfg.id.clone()).unwrap_or_default()
+                },
+                "run": test.run,
+                "shard": test.shard,
+                "attempt": test.attempt,
+            }
+        }),
+        _ => return None,
+    })
+}
+
+fn convert_test_result(test_result: &build_event_stream::TestResult) -> Value {
+    let mut object = Map::new();
+    object.insert(
+        "status".to_string(),
+        json!(build_event_stream::TestStatus::try_from(test_result.status)
+            .ok()
+            .map(|status| status.as_str_name())
+            .unwrap_or("NO_STATUS")),
+    );
+
+    if let Some(execution_info) = test_result.execution_info.as_ref() {
+        object.insert(
+            "executionInfo".to_string(),
+            convert_execution_info(execution_info),
+        );
+    }
+
+    Value::Object(object)
+}
+
+fn convert_options_parsed(options: &build_event_stream::OptionsParsed) -> Value {
+    json!({
+        "startupOptions": options.startup_options,
+        "explicitStartupOptions": options.explicit_startup_options,
+        "cmdLine": options.cmd_line,
+        "explicitCmdLine": options.explicit_cmd_line,
+        "toolTag": options.tool_tag,
+    })
+}
+
+fn convert_action_executed(action: &build_event_stream::ActionExecuted) -> Value {
+    json!({
+        "success": action.success,
+        "type": action.r#type,
+        "exitCode": action.exit_code,
+        "primaryOutput": action.primary_output.as_ref().map(|file| file.name.clone()).unwrap_or_default(),
+        "stdout": action.stdout.as_ref().map(|file| file.name.clone()).unwrap_or_default(),
+        "stderr": action.stderr.as_ref().map(|file| file.name.clone()).unwrap_or_default(),
+        "commandLine": action.command_line,
+        "startTimeMillis": proto_timestamp_to_millis(action.start_time.as_ref()).map(|value| value.to_string()),
+        "endTimeMillis": proto_timestamp_to_millis(action.end_time.as_ref()).map(|value| value.to_string()),
+        "failureDetail": action.failure_detail.as_ref().map(|detail| detail.message.clone()),
+    })
+}
+
+fn convert_execution_info(
+    execution_info: &build_event_stream::test_result::ExecutionInfo,
+) -> Value {
+    let mut object = Map::new();
+    object.insert("strategy".to_string(), json!(execution_info.strategy));
+    if let Some(timing_breakdown) = execution_info.timing_breakdown.as_ref() {
+        object.insert(
+            "timingBreakdown".to_string(),
+            convert_timing_breakdown(timing_breakdown),
+        );
+    }
+    Value::Object(object)
+}
+
+fn convert_timing_breakdown(
+    timing_breakdown: &build_event_stream::test_result::execution_info::TimingBreakdown,
+) -> Value {
+    json!({
+        "name": timing_breakdown.name,
+        "time": proto_duration_to_seconds_text(timing_breakdown.time.as_ref()).unwrap_or_else(|| "0s".to_string()),
+        "child": timing_breakdown
+            .child
+            .iter()
+            .map(convert_timing_breakdown)
+            .collect::<Vec<_>>(),
+    })
+}
+
+#[allow(deprecated)]
+fn convert_test_summary(test_summary: &build_event_stream::TestSummary) -> Value {
+    json!({
+        "overallStatus": build_event_stream::TestStatus::try_from(test_summary.overall_status)
+            .ok()
+            .map(|status| status.as_str_name())
+            .unwrap_or("NO_STATUS"),
+        "totalRunDurationMillis": proto_duration_to_millis(test_summary.total_run_duration.as_ref())
+            .unwrap_or(test_summary.total_run_duration_millis)
+            .to_string(),
+        "totalRunDuration": proto_duration_to_seconds_text(test_summary.total_run_duration.as_ref())
+            .unwrap_or_else(|| "0s".to_string()),
+        "totalNumCached": test_summary.total_num_cached,
+    })
+}
+
+fn convert_build_metrics(metrics: &build_event_stream::BuildMetrics) -> Value {
+    let mut object = Map::new();
+
+    if let Some(action_summary) = metrics.action_summary.as_ref() {
+        object.insert(
+            "actionSummary".to_string(),
+            convert_action_summary(action_summary),
+        );
+    }
+    if let Some(timing_metrics) = metrics.timing_metrics.as_ref() {
+        object.insert(
+            "timingMetrics".to_string(),
+            json!({
+                "wallTimeInMs": timing_metrics.wall_time_in_ms.to_string(),
+                "cpuTimeInMs": timing_metrics.cpu_time_in_ms.to_string(),
+                "analysisPhaseTimeInMs": timing_metrics.analysis_phase_time_in_ms.to_string(),
+                "executionPhaseTimeInMs": timing_metrics.execution_phase_time_in_ms.to_string(),
+            }),
+        );
+    }
+    if let Some(memory_metrics) = metrics.memory_metrics.as_ref() {
+        object.insert(
+            "memoryMetrics".to_string(),
+            json!({
+                "usedHeapSizePostBuild": memory_metrics.used_heap_size_post_build.to_string(),
+                "peakPostGcHeapSize": memory_metrics.peak_post_gc_heap_size.to_string(),
+                "peakPostGcTenuredSpaceHeapSize": memory_metrics.peak_post_gc_tenured_space_heap_size.to_string(),
+                "garbageMetrics": memory_metrics.garbage_metrics.iter().map(|metric| json!({
+                    "type": metric.r#type,
+                    "garbageCollected": metric.garbage_collected.to_string(),
+                })).collect::<Vec<_>>(),
+            }),
+        );
+    }
+    if let Some(network_metrics) = metrics.network_metrics.as_ref() {
+        object.insert(
+            "networkMetrics".to_string(),
+            json!({
+                "systemNetworkStats": network_metrics.system_network_stats.as_ref().map(|stats| json!({
+                    "bytesSent": stats.bytes_sent.to_string(),
+                    "bytesRecv": stats.bytes_recv.to_string(),
+                    "packetsSent": stats.packets_sent.to_string(),
+                    "packetsRecv": stats.packets_recv.to_string(),
+                    "peakBytesSentPerSec": stats.peak_bytes_sent_per_sec.to_string(),
+                    "peakBytesRecvPerSec": stats.peak_bytes_recv_per_sec.to_string(),
+                    "peakPacketsSentPerSec": stats.peak_packets_sent_per_sec.to_string(),
+                    "peakPacketsRecvPerSec": stats.peak_packets_recv_per_sec.to_string(),
+                })).unwrap_or_else(|| json!({})),
+            }),
+        );
+    }
+    object.insert(
+        "workerMetrics".to_string(),
+        Value::Array(metrics.worker_metrics.iter().map(|metric| json!({
+            "mnemonic": metric.mnemonic,
+            "isMultiplex": metric.is_multiplex,
+            "isSandbox": metric.is_sandbox,
+            "actionsExecuted": metric.actions_executed.to_string(),
+            "priorActionsExecuted": metric.prior_actions_executed.to_string(),
+            "workerStatus": build_event_stream::build_metrics::worker_metrics::WorkerStatus::try_from(metric.worker_status)
+                .ok()
+                .map(|status| status.as_str_name())
+                .unwrap_or("UNKNOWN"),
+            "workerStats": metric.worker_stats.iter().map(|stats| json!({
+                "collectTimeInMs": stats.collect_time_in_ms.to_string(),
+                "workerMemoryInKb": stats.worker_memory_in_kb,
+                "priorWorkerMemoryInKb": stats.prior_worker_memory_in_kb,
+                "lastActionStartTimeInMs": stats.last_action_start_time_in_ms.to_string(),
+            })).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>()),
+    );
+
+    Value::Object(object)
+}
+
+#[allow(deprecated)]
+fn convert_action_summary(
+    action_summary: &build_event_stream::build_metrics::ActionSummary,
+) -> Value {
+    json!({
+        "actionsExecuted": action_summary.actions_executed.to_string(),
+        "remoteCacheHits": action_summary.remote_cache_hits.to_string(),
+        "actionCacheStatistics": action_summary.action_cache_statistics.as_ref().map(|stats| json!({
+            "hits": stats.hits,
+            "misses": stats.misses,
+        })).unwrap_or_else(|| json!({})),
+        "runnerCount": action_summary.runner_count.iter().map(|runner| json!({
+            "name": runner.name,
+            "count": runner.count,
+        })).collect::<Vec<_>>(),
+        "actionData": action_summary.action_data.iter().map(|data| json!({
+            "mnemonic": data.mnemonic,
+            "actionsExecuted": data.actions_executed.to_string(),
+            "firstStartedMs": data.first_started_ms.to_string(),
+            "lastEndedMs": data.last_ended_ms.to_string(),
+            "systemTime": proto_duration_to_seconds_text(data.system_time.as_ref()),
+            "userTime": proto_duration_to_seconds_text(data.user_time.as_ref()),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn proto_duration_to_millis(duration: Option<&ProtoDuration>) -> Option<i64> {
+    let duration = duration?;
+    Some(duration.seconds.saturating_mul(1000) + i64::from(duration.nanos) / 1_000_000)
+}
+
+fn proto_duration_to_seconds_text(duration: Option<&ProtoDuration>) -> Option<String> {
+    let duration = duration?;
+    let millis = proto_duration_to_millis(Some(duration))?;
+    Some(format!("{:.3}s", millis as f64 / 1000.0))
+}
+
+fn proto_timestamp_to_millis(timestamp: Option<&ProtoTimestamp>) -> Option<i64> {
+    let timestamp = timestamp?;
+    Some(timestamp.seconds.saturating_mul(1000) + i64::from(timestamp.nanos) / 1_000_000)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -631,7 +1135,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await;
 
-    let service = BesIngestService::new();
+    let service = BesIngestService::new()
+        .await
+        .map_err(|err| format!("failed to initialize BES ingest service: {err}"))?;
     let sink_config = service.sink.as_ref().clone();
 
     info!(

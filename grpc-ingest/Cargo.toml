@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+aws-config = "1.8"
+aws-sdk-s3 = "1.92"
 base64 = "0.22"
 flate2 = "1.1"
 prost = "0.13"

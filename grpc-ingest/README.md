@@ -42,8 +42,20 @@ Useful environment variables:
   - Defaults to `15`.
 - `BEPLESS_HTTP_SINK_CHUNK_BYTES`
   - Optional.
-  - Maximum NDJSON bytes per chunk sent to the worker chunk ingress.
+  - Maximum NDJSON bytes per chunk sent to the worker chunk ingress fallback path.
   - Defaults to `524288` (512 KiB).
+- `BEPLESS_R2_BUCKET`
+  - Optional.
+  - When set together with the R2 endpoint and credentials below, `grpc-ingest` uploads one normalized NDJSON object directly to R2 and only sends a lightweight finalize request to the worker.
+- `BEPLESS_R2_ENDPOINT`
+  - Optional.
+  - Example: `https://<account_id>.r2.cloudflarestorage.com`
+- `BEPLESS_R2_ACCESS_KEY_ID`
+  - Optional.
+  - R2 S3-compatible access key ID.
+- `BEPLESS_R2_SECRET_ACCESS_KEY`
+  - Optional.
+  - R2 S3-compatible secret access key.
 - `BEPLESS_HTTP_SINK_MAX_RETRIES`
   - Optional.
   - Defaults to `5`.
@@ -171,12 +183,18 @@ When `BEPLESS_HTTP_SINK_URL` is set to the worker ingest URL, for example
 - chunk upload URL: `https://bepless.hawkingrei.com/ingest-chunks`
 - finalize URL: `https://bepless.hawkingrei.com/ingest-finalize`
 
-It then:
+Without direct R2 upload configured, it:
 
 1. renders one normalized NDJSON line per BES event
 2. groups those lines into request chunks capped by `BEPLESS_HTTP_SINK_CHUNK_BYTES`
 3. uploads each chunk to the worker chunk ingress
 4. calls the finalize endpoint once all chunks are stored
+
+With direct R2 upload configured, it:
+
+1. renders one normalized NDJSON line per BES event
+2. uploads the full normalized invocation as one R2 object
+3. calls the finalize endpoint with the normalized R2 object key
 
 Each NDJSON line inside the chunk bodies still contains:
 
@@ -193,6 +211,19 @@ Each uploaded chunk request now carries:
 - `chunk_body_base64`
 
 where `chunk_body_base64` is the base64-encoded gzip payload for one chunk of NDJSON lines.
+
+Direct R2 finalize request:
+
+```json
+{
+  "project_id": "example-project",
+  "build_id": "example-build",
+  "invocation_id": "example-invocation",
+  "chunk_count": 0,
+  "notification_keywords": ["source:ci"],
+  "normalized_object_key": "reviews/example-invocation/normalized.ndjson"
+}
+```
 
 It still intentionally does not include:
 

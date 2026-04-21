@@ -880,6 +880,8 @@ li {
   var activeFlakyLabel = null;
   var activeTimelineFilter = "longest";
   window.__lastBrowserInsights = null;
+  var INVOCATION_LOOKUP_MAX_ATTEMPTS = 5;
+  var INVOCATION_LOOKUP_BASE_BACKOFF_MS = 800;
   function currentInvocationPath() {
     const trimmed = window.location.pathname.replace(/^\/+|\/+$/g, "");
     return trimmed || null;
@@ -908,6 +910,9 @@ li {
     for (const button of timelineFilterButtons) {
       button.classList.toggle("timeline-filter-button-active", button.dataset.timelineFilter === filter);
     }
+  }
+  function sleep(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
   }
   function formatMs(value) {
     if (value === null || value === void 0) return "n/a";
@@ -1013,6 +1018,104 @@ li {
     }
     return null;
   }
+  function parseCriticalPathMs(stderr) {
+    const text = String(stderr || "");
+    const index = text.indexOf("Critical Path:");
+    if (index < 0) return null;
+    const token = text.slice(index + "Critical Path:".length).trim().split(/\s+/)[0];
+    return parseDurationMs(token);
+  }
+  function inferCommandFromOptionsParsed(optionsParsed) {
+    for (const key of ["cmdLine", "explicitCmdLine"]) {
+      for (const entry of optionsParsed?.[key] || []) {
+        const token = String(entry || "").trim();
+        if (["build", "test", "run", "query", "cquery", "aquery", "coverage", "fetch", "info", "clean"].includes(token)) {
+          return token;
+        }
+      }
+    }
+    return null;
+  }
+  function foldTimingBreakdownTotals(node, totals) {
+    if (!node || typeof node !== "object") return;
+    const name = node.name ? String(node.name) : null;
+    const durationMs = parseDurationMs(node.time);
+    if (name && durationMs !== null) {
+      totals[name] = (totals[name] || 0) + durationMs;
+    }
+    for (const child of node.child || []) {
+      foldTimingBreakdownTotals(child, totals);
+    }
+  }
+  function buildFindings(summary, slowestTests, topActionMnemonics, timingBreakdownMs) {
+    const findings = [];
+    if (summary.execution_phase_ms !== null && summary.wall_time_ms !== null && summary.wall_time_ms > 0) {
+      if (summary.execution_phase_ms * 100 / summary.wall_time_ms >= 70) {
+        findings.push({
+          severity: "high",
+          category: "execution",
+          message: `Execution dominates wall time: execution phase is ${summary.execution_phase_ms} ms out of ${summary.wall_time_ms} ms wall time.`
+        });
+      }
+    }
+    if (summary.analysis_phase_ms !== null && summary.wall_time_ms !== null && summary.wall_time_ms > 0) {
+      if (summary.analysis_phase_ms * 100 / summary.wall_time_ms >= 30) {
+        findings.push({
+          severity: "medium",
+          category: "analysis",
+          message: `Analysis is a visible cost center: analysis phase is ${summary.analysis_phase_ms} ms out of ${summary.wall_time_ms} ms wall time.`
+        });
+      }
+    }
+    if (summary.cache_hit_ratio !== null && summary.cache_hit_ratio !== void 0) {
+      if (summary.cache_hit_ratio < 0.6) {
+        findings.push({
+          severity: "high",
+          category: "cache",
+          message: `Action cache hit ratio is low at ${(summary.cache_hit_ratio * 100).toFixed(1)}%. Expect unnecessary rebuild work.`
+        });
+      } else if (summary.cache_hit_ratio < 0.85) {
+        findings.push({
+          severity: "medium",
+          category: "cache",
+          message: `Action cache hit ratio is only ${(summary.cache_hit_ratio * 100).toFixed(1)}%. There is room to reduce repeated execution.`
+        });
+      }
+    }
+    if (summary.critical_path_ms !== null && slowestTests.length > 0 && summary.critical_path_ms > 0) {
+      const slowestTest = slowestTests[0];
+      if (slowestTest.duration_ms * 100 / summary.critical_path_ms >= 50) {
+        findings.push({
+          severity: "medium",
+          category: "tests",
+          message: `A single test is consuming a large portion of the critical path: ${slowestTest.label} took ${slowestTest.duration_ms} ms, critical path is ${summary.critical_path_ms} ms.`
+        });
+      }
+    }
+    if ((timingBreakdownMs.queueTime || 0) > 0) {
+      findings.push({
+        severity: "medium",
+        category: "remote-execution",
+        message: `Observed queueTime in test execution breakdowns: ${timingBreakdownMs.queueTime} ms aggregated. Scheduler pressure may be visible.`
+      });
+    }
+    if ((timingBreakdownMs.networkTime || 0) > 0) {
+      findings.push({
+        severity: "low",
+        category: "remote-execution",
+        message: `Observed networkTime in execution breakdowns: ${timingBreakdownMs.networkTime} ms aggregated.`
+      });
+    }
+    if (topActionMnemonics.length > 0 && topActionMnemonics[0].span_ms > 0) {
+      const action = topActionMnemonics[0];
+      findings.push({
+        severity: "low",
+        category: "actions",
+        message: `Longest action mnemonic span is ${action.mnemonic} at ${action.span_ms} ms across ${action.actions_executed} executed actions.`
+      });
+    }
+    return findings;
+  }
   function isFlakyTest(test) {
     if (!test) return false;
     if (test.status === "FLAKY") return true;
@@ -1033,7 +1136,7 @@ li {
     const lightness = success ? 42 : 38;
     return `hsl(${hue} ${saturation}% ${lightness}%)`;
   }
-  function summarizeBrowserInsights(input) {
+  function summarizeBrowserInsights(input, storedAnalysis = null) {
     const compileItems = [];
     const ioItems = [];
     const testExecutionWallItems = [];
@@ -1044,6 +1147,40 @@ li {
     const flakyAttemptsByLabel = /* @__PURE__ */ new Map();
     const cacheMissReasons = /* @__PURE__ */ new Map();
     const hostJvmArgs = /* @__PURE__ */ new Set();
+    const failedTargets = [];
+    const runnerCounts = {};
+    const testStrategyCounts = {};
+    const timingBreakdownMs = {};
+    const topActionEntries = [];
+    const storedSummary = storedAnalysis?.summary || {};
+    const summary = {
+      invocation_id: storedSummary.invocation_id || null,
+      invocation_source: storedSummary.invocation_source || null,
+      command: storedSummary.command || null,
+      command_source: storedSummary.command_source || null,
+      bazel_version: storedSummary.bazel_version || null,
+      success: storedSummary.success ?? null,
+      exit_code: storedSummary.exit_code || null,
+      started_at_ms: storedSummary.started_at_ms ?? null,
+      finished_at_ms: storedSummary.finished_at_ms ?? null,
+      elapsed_ms: storedSummary.elapsed_ms ?? null,
+      critical_path_ms: storedSummary.critical_path_ms ?? null,
+      wall_time_ms: storedSummary.wall_time_ms ?? null,
+      cpu_time_ms: storedSummary.cpu_time_ms ?? null,
+      analysis_phase_ms: storedSummary.analysis_phase_ms ?? null,
+      execution_phase_ms: storedSummary.execution_phase_ms ?? null,
+      configured_targets: 0,
+      configured_test_targets: 0,
+      completed_targets: 0,
+      failed_targets: 0,
+      test_summaries: 0,
+      failed_tests: 0,
+      total_actions: storedSummary.total_actions ?? null,
+      remote_cache_hits: storedSummary.remote_cache_hits ?? null,
+      action_cache_hits: storedSummary.action_cache_hits ?? null,
+      action_cache_misses: storedSummary.action_cache_misses ?? null,
+      cache_hit_ratio: storedSummary.cache_hit_ratio ?? null
+    };
     let cacheOverview = null;
     let jvmMetrics = null;
     let timingMetrics = null;
@@ -1066,6 +1203,10 @@ li {
           action_hits: toNumber(actionCacheStatistics.hits),
           action_misses: toNumber(actionCacheStatistics.misses)
         };
+        summary.total_actions = toNumber(actionSummary.actionsExecuted) ?? summary.total_actions;
+        summary.remote_cache_hits = cacheOverview.remote_hits;
+        summary.action_cache_hits = cacheOverview.action_hits;
+        summary.action_cache_misses = cacheOverview.action_misses;
         for (const detail of actionCacheStatistics.missDetails || []) {
           const reason = detail.reason || "UNKNOWN";
           const count = toNumber(detail.count) || 0;
@@ -1073,16 +1214,31 @@ li {
         }
         for (const entry of actionSummary.actionData || []) {
           const mnemonic = entry.mnemonic || "unknown";
-          if (!isCompileMnemonic(mnemonic)) continue;
+          const actionsExecuted = toNumber(entry.actionsExecuted) || 0;
           const firstStartedMs = toNumber(entry.firstStartedMs) || 0;
           const lastEndedMs = toNumber(entry.lastEndedMs) || 0;
-          compileItems.push({
-            name: mnemonic,
-            actions_executed: toNumber(entry.actionsExecuted) || 0,
-            duration_ms: Math.max(0, lastEndedMs - firstStartedMs),
+          const spanMs = Math.max(0, lastEndedMs - firstStartedMs);
+          runnerCounts[mnemonic] = runnerCounts[mnemonic] || 0;
+          const topActionEntry = {
+            mnemonic,
+            actions_executed: actionsExecuted,
+            span_ms: spanMs,
             user_time_ms: parseDurationMs(entry.userTime),
             system_time_ms: parseDurationMs(entry.systemTime)
+          };
+          topActionEntries.push(topActionEntry);
+          if (!isCompileMnemonic(mnemonic)) continue;
+          compileItems.push({
+            name: mnemonic,
+            actions_executed: actionsExecuted,
+            duration_ms: spanMs,
+            user_time_ms: topActionEntry.user_time_ms,
+            system_time_ms: topActionEntry.system_time_ms
           });
+        }
+        for (const entry of actionSummary.runnerCount || []) {
+          const name = entry.name || "unknown";
+          runnerCounts[name] = toNumber(entry.count) || 0;
         }
       }
       if (buildMetrics && buildMetrics.memoryMetrics) {
@@ -1102,6 +1258,10 @@ li {
           analysis_phase_time_ms: toNumber(metrics.analysisPhaseTimeInMs),
           execution_phase_time_ms: toNumber(metrics.executionPhaseTimeInMs)
         };
+        summary.wall_time_ms = timingMetrics.wall_time_ms;
+        summary.cpu_time_ms = timingMetrics.cpu_time_ms;
+        summary.analysis_phase_ms = timingMetrics.analysis_phase_time_ms;
+        summary.execution_phase_ms = timingMetrics.execution_phase_time_ms;
       }
       if (buildMetrics && buildMetrics.networkMetrics && buildMetrics.networkMetrics.systemNetworkStats) {
         const stats = buildMetrics.networkMetrics.systemNetworkStats;
@@ -1132,6 +1292,13 @@ li {
         }
       }
       if (event.optionsParsed) {
+        if (!summary.command) {
+          const inferredCommand = inferCommandFromOptionsParsed(event.optionsParsed);
+          if (inferredCommand) {
+            summary.command = inferredCommand;
+            summary.command_source = "optionsParsed.cmdLine";
+          }
+        }
         for (const option of event.optionsParsed.startupOptions || []) {
           if (String(option).includes("jvm")) {
             hostJvmArgs.add(option);
@@ -1173,10 +1340,22 @@ li {
         }
       }
       if (event.started) {
+        if (!summary.invocation_id && event.started.uuid) {
+          summary.invocation_id = event.started.uuid;
+          summary.invocation_source = "started.uuid";
+        }
+        if (!summary.command && event.started.command) {
+          summary.command = event.started.command;
+          summary.command_source = "started.command";
+        }
+        if (!summary.bazel_version && event.started.buildToolVersion) {
+          summary.bazel_version = event.started.buildToolVersion;
+        }
         const startMs = toNumber(event.started.startTimeMillis);
         if (startMs !== null) {
           invocationWindow = invocationWindow || {};
           invocationWindow.started_at_ms = startMs;
+          summary.started_at_ms = startMs;
         }
       }
       if (event.finished) {
@@ -1184,20 +1363,54 @@ li {
         if (endMs !== null) {
           invocationWindow = invocationWindow || {};
           invocationWindow.finished_at_ms = endMs;
+          summary.finished_at_ms = endMs;
+        }
+        if (event.finished.overallSuccess !== void 0 && event.finished.overallSuccess !== null) {
+          summary.success = Boolean(event.finished.overallSuccess);
+        }
+        if (!summary.exit_code && event.finished.exitCode?.name) {
+          summary.exit_code = event.finished.exitCode.name;
+        }
+      }
+      if (event.progress?.stderr && summary.critical_path_ms === null) {
+        const criticalPathMs = parseCriticalPathMs(event.progress.stderr);
+        if (criticalPathMs !== null) {
+          summary.critical_path_ms = criticalPathMs;
+        }
+      }
+      if (event.id?.targetConfigured && event.configured) {
+        summary.configured_targets += 1;
+        if (event.configured.testSize) {
+          summary.configured_test_targets += 1;
+        }
+      }
+      if (event.id?.targetCompleted) {
+        summary.completed_targets += 1;
+        const label = event.id.targetCompleted.label || "<unknown>";
+        const completedSuccess = event.completed?.success;
+        const abortedReason = event.aborted?.reason;
+        if (completedSuccess === false || abortedReason) {
+          if (failedTargets.length < 20) {
+            failedTargets.push(label);
+          }
         }
       }
       if (event.id && event.id.testSummary && event.testSummary) {
-        const summary = event.testSummary;
+        const testSummary = event.testSummary;
         const test = {
           label: event.id.testSummary.label || "<unknown>",
-          status: summary.overallStatus || "UNKNOWN",
-          duration_ms: toNumber(summary.totalRunDurationMillis) ?? toNumber(summary.totalRunDurationInMs) ?? parseDurationMs(summary.totalRunDuration) ?? 0,
-          cached: summary.totalNumCached === null || summary.totalNumCached === void 0 ? null : Number(summary.totalNumCached) > 0,
-          attempt_count: toNumber(summary.attemptCount),
-          run_count: toNumber(summary.runCount),
-          total_run_count: toNumber(summary.totalRunCount)
+          status: testSummary.overallStatus || "UNKNOWN",
+          duration_ms: toNumber(testSummary.totalRunDurationMillis) ?? toNumber(testSummary.totalRunDurationInMs) ?? parseDurationMs(testSummary.totalRunDuration) ?? 0,
+          cached: testSummary.totalNumCached === null || testSummary.totalNumCached === void 0 ? null : Number(testSummary.totalNumCached) > 0,
+          attempt_count: toNumber(testSummary.attemptCount),
+          run_count: toNumber(testSummary.runCount),
+          total_run_count: toNumber(testSummary.totalRunCount)
         };
         tests.push(test);
+        summary.test_summaries += 1;
+        if (test.status !== "PASSED" && test.status !== "FLAKY") {
+          summary.failed_tests += 1;
+        }
         if (isFlakyTest(test)) {
           flakyTests.push(test);
         }
@@ -1221,6 +1434,10 @@ li {
           strategy: testResult.executionInfo.strategy || "n/a",
           status: testResult.status || "UNKNOWN"
         });
+        if (testResult.executionInfo.strategy) {
+          testStrategyCounts[testResult.executionInfo.strategy] = (testStrategyCounts[testResult.executionInfo.strategy] || 0) + 1;
+        }
+        foldTimingBreakdownTotals(timingBreakdown, timingBreakdownMs);
         const attempts = flakyAttemptsByLabel.get(label) || [];
         attempts.push({
           label,
@@ -1241,14 +1458,41 @@ li {
     slowActions.sort((left, right) => (right.duration_ms ?? -1) - (left.duration_ms ?? -1));
     tests.sort((left, right) => right.duration_ms - left.duration_ms);
     flakyTests.sort((left, right) => right.duration_ms - left.duration_ms);
+    const topActionMnemonics = topActionEntries.sort((left, right) => right.span_ms - left.span_ms).slice(0, 8);
+    if (summary.started_at_ms !== null && summary.finished_at_ms !== null && summary.finished_at_ms >= summary.started_at_ms) {
+      summary.elapsed_ms = summary.finished_at_ms - summary.started_at_ms;
+    }
+    if (summary.action_cache_hits !== null && summary.action_cache_misses !== null) {
+      const totalCacheEvents = summary.action_cache_hits + summary.action_cache_misses;
+      if (totalCacheEvents > 0) {
+        summary.cache_hit_ratio = summary.action_cache_hits / totalCacheEvents;
+      }
+    }
+    if (cacheOverview) {
+      const totalCacheEvents = (cacheOverview.action_hits || 0) + (cacheOverview.action_misses || 0);
+      if (totalCacheEvents > 0) {
+        summary.cache_hit_ratio = (cacheOverview.action_hits || 0) / totalCacheEvents;
+      }
+    }
+    summary.failed_targets = failedTargets.length;
     return {
+      analysis: {
+        summary,
+        slowest_tests: tests.slice(0, 10),
+        failed_targets: failedTargets,
+        top_action_mnemonics: topActionMnemonics,
+        runner_counts: runnerCounts,
+        test_strategy_counts: testStrategyCounts,
+        timing_breakdown_ms: timingBreakdownMs,
+        findings: buildFindings(summary, tests.slice(0, 10), topActionMnemonics, timingBreakdownMs)
+      },
       cacheOverview,
       hostJvmArgs: Array.from(hostJvmArgs),
       jvmMetrics,
       timingMetrics,
       networkMetrics,
       invocationWindow,
-      timelineActions: timelineActions.sort((left, right) => left.start_ms - right.start_ms || right.duration_ms - left.duration_ms).slice(0, 60),
+      timelineActions: timelineActions.sort((left, right) => left.start_ms - right.start_ms || right.duration_ms - left.duration_ms),
       workerMetrics: workerMetrics.sort((left, right) => (right.worker_memory_kb ?? -1) - (left.worker_memory_kb ?? -1)).slice(0, 10),
       cacheMissReasons: Array.from(cacheMissReasons.entries()).sort((left, right) => right[1] - left[1]),
       topCompileItems: compileItems.slice(0, 10),
@@ -1343,20 +1587,21 @@ li {
   }
   function renderSummary(summary) {
     const cards = [
-      ["Invocation", summary.invocation_id || "n/a"],
-      ["Command", summary.command || "n/a"],
-      ["Wall Time", formatMs(summary.wall_time_ms ?? summary.elapsed_ms)],
-      ["Critical Path", formatMs(summary.critical_path_ms)],
-      ["Cache Hit Ratio", formatPercent(summary.cache_hit_ratio)],
-      ["Actions", summary.total_actions ?? "n/a"],
-      ["Failed Tests", summary.failed_tests],
-      ["Exit Code", summary.exit_code || "n/a"]
+      ["Invocation", summary.invocation_id || "n/a", summary.invocation_source || null],
+      ["Command", summary.command || "n/a", summary.command_source || null],
+      ["Wall Time", formatMs(summary.wall_time_ms ?? summary.elapsed_ms), null],
+      ["Critical Path", formatMs(summary.critical_path_ms), null],
+      ["Cache Hit Ratio", formatPercent(summary.cache_hit_ratio), null],
+      ["Actions", summary.total_actions ?? "n/a", null],
+      ["Failed Tests", summary.failed_tests, null],
+      ["Exit Code", summary.exit_code || "n/a", null]
     ];
     summaryGrid.innerHTML = cards.map(
-      ([label, value]) => `
+      ([label, value, source]) => `
         <article class="kpi">
           <div class="kpi-label">${label}</div>
           <div class="kpi-value">${value}</div>
+          ${source ? `<div class="kpi-label">source=${source}</div>` : ""}
         </article>
       `
     ).join("");
@@ -1780,10 +2025,11 @@ li {
       throw new Error(message);
     }
     const review = await response.json();
+    const browserInsights = summarizeBrowserInsights(review.ingest_body, review.analysis);
     currentReviewId = review.id;
     renderHistory(await fetchReviews(false));
-    renderAnalysis(review.analysis, summarizeBrowserInsights(review.ingest_body));
-    syncInvocationPath(review.invocation_id || review.analysis.summary.invocation_id || null);
+    renderAnalysis(browserInsights.analysis, browserInsights);
+    syncInvocationPath(review.invocation_id || browserInsights.analysis.summary.invocation_id || null);
     status.textContent = `Showing review #${review.id} from ${new Date(review.uploaded_at_ms).toLocaleString()}.`;
   }
   async function fetchReviews(updateStatus = true) {
@@ -1800,6 +2046,24 @@ li {
     renderHistory(reviews);
     return reviews;
   }
+  async function findInvocationReviewWithRetry(invocationId, updateStatus = true) {
+    const decodedInvocationId = decodeURIComponent(invocationId);
+    for (let attempt = 1; attempt <= INVOCATION_LOOKUP_MAX_ATTEMPTS; attempt += 1) {
+      if (updateStatus) {
+        status.textContent = attempt === 1 ? `Loading invocation ${decodedInvocationId}...` : `Invocation ${decodedInvocationId} not visible yet. Retrying ${attempt}/${INVOCATION_LOOKUP_MAX_ATTEMPTS}...`;
+      }
+      const reviews = await fetchReviews(false);
+      const matchedReview = reviews.find((review) => review.invocation_id === decodedInvocationId);
+      if (matchedReview) {
+        return { reviews, matchedReview };
+      }
+      if (attempt < INVOCATION_LOOKUP_MAX_ATTEMPTS) {
+        const backoffMs = INVOCATION_LOOKUP_BASE_BACKOFF_MS * 2 ** (attempt - 1);
+        await sleep(backoffMs);
+      }
+    }
+    return { reviews: await fetchReviews(false), matchedReview: null };
+  }
   async function boot() {
     renderSetupSnippets();
     syncSetupVisibility();
@@ -1812,19 +2076,19 @@ li {
       }
       const invocationId = currentInvocationPath();
       if (invocationId) {
-        const matchedReview = reviews.find(
-          (review) => review.invocation_id === decodeURIComponent(invocationId)
+        const { reviews: retriedReviews, matchedReview } = await findInvocationReviewWithRetry(
+          invocationId
         );
         if (matchedReview) {
           currentReviewId = matchedReview.id;
-          renderHistory(reviews);
+          renderHistory(retriedReviews);
           await loadReview(matchedReview.id);
           return;
         }
-        status.textContent = `Invocation ${decodeURIComponent(invocationId)} is not in the latest 50 reviews.`;
-        currentReviewId = reviews[0].id;
-        renderHistory(reviews);
-        await loadReview(reviews[0].id);
+        currentReviewId = null;
+        renderHistory(retriedReviews);
+        resetReviewPanels(`Invocation ${decodeURIComponent(invocationId)} was not found in the latest 50 reviews.`);
+        status.textContent = `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`;
         return;
       }
       currentReviewId = reviews[0].id;
@@ -1837,6 +2101,21 @@ li {
   }
   refreshBtn.addEventListener("click", async () => {
     try {
+      const invocationId = currentInvocationPath();
+      if (invocationId) {
+        const { reviews: reviews2, matchedReview } = await findInvocationReviewWithRetry(invocationId);
+        if (matchedReview) {
+          currentReviewId = matchedReview.id;
+          renderHistory(reviews2);
+          await loadReview(matchedReview.id);
+        } else {
+          currentReviewId = null;
+          renderHistory(reviews2);
+          resetReviewPanels(`Invocation ${decodeURIComponent(invocationId)} was not found in the latest 50 reviews.`);
+          status.textContent = `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`;
+        }
+        return;
+      }
       const reviews = await fetchReviews();
       if (reviews.length === 0) {
         currentReviewId = null;
