@@ -16,7 +16,7 @@ const visCss = await readFile(
 );
 
 const jsBundle = await build({
-  entryPoints: [path.join(webSrcDir, "main.ts")],
+  entryPoints: [path.join(webSrcDir, "main.tsx")],
   bundle: true,
   write: false,
   format: "iife",

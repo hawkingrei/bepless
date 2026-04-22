@@ -9,17 +9,14 @@ import {
   copyBazelConfigBtn,
   copyBazelConfigStatus,
   flakyTestsList,
-  historyList,
-  refreshBtn,
   setupGrid,
   sinkConfig,
-  status,
-  tabButtons,
-  tabPanels,
   timelineFilterButtons,
   timelineLimit,
+  initDom,
 } from "./app/dom";
 import { formatMs, sleep } from "./app/utils";
+import { setAppStoreState } from "./app/store";
 import { summarizeBrowserInsights } from "./app/analysis";
 import {
   renderAnalysis,
@@ -57,18 +54,13 @@ function syncInvocationPath(invocationId) {
 
 function syncSetupVisibility() {
   const hasInvocationPath = Boolean(currentInvocationPath());
-  setupGrid.classList.toggle("hidden", hasInvocationPath);
+  setupGrid?.classList.toggle("hidden", hasInvocationPath);
   document.body.classList.toggle("review-entry", hasInvocationPath);
 }
 
 function setActiveTab(tab) {
   activeTab = tab;
-  for (const button of tabButtons) {
-    button.classList.toggle("tab-button-active", button.dataset.tab === tab);
-  }
-  for (const panel of tabPanels) {
-    panel.classList.toggle("hidden", panel.dataset.tabPanel !== tab);
-  }
+  setAppStoreState({ activeTab: tab });
 }
 
 function setActiveTimelineFilter(filter) {
@@ -173,29 +165,25 @@ function renderHistory(reviews, options = {}) {
   const { hydrate = true } = options;
   if (!reviews || reviews.length === 0) {
     currentHistoryReviews = [];
-    historyList.innerHTML = '<li class="muted">No uploaded reviews yet.</li>';
+    setAppStoreState({ historyItems: [] });
     return;
   }
 
   currentHistoryReviews = reviews;
-  historyList.innerHTML = reviews
-    .map((review) => {
+  setAppStoreState({
+    historyItems: reviews.map((review) => {
       const summary = reviewSummary(review);
-      return `
-        <li class="history-item ${review.id === currentReviewId ? "history-item-active" : ""}" data-review-id="${review.id}">
-          <div class="split-line">
-            <strong class="mono">${reviewLabel(review)}</strong>
-            <span class="badge">${reviewStatus(review)}</span>
-          </div>
-          <div class="history-meta">
-            <span>${new Date(review.uploaded_at_ms).toLocaleString()}</span>
-            <span>critical=${formatMs(summary.critical_path_ms)}</span>
-            <span>wall=${formatMs(summary.wall_time_ms ?? summary.elapsed_ms)}</span>
-          </div>
-        </li>
-      `;
-    })
-    .join("");
+      return {
+        id: review.id,
+        label: reviewLabel(review),
+        status: reviewStatus(review),
+        uploadedAtText: new Date(review.uploaded_at_ms).toLocaleString(),
+        criticalText: formatMs(summary.critical_path_ms),
+        wallText: formatMs(summary.wall_time_ms ?? summary.elapsed_ms),
+        active: review.id === currentReviewId,
+      };
+    }),
+  });
 
   if (hydrate) {
     queueHistoryHydration(reviews);
@@ -205,7 +193,8 @@ function renderHistory(reviews, options = {}) {
 function renderSetupSnippets() {
   const grpcHost = "beplessproxy.hawkingrei.com";
   const workerOrigin = "https://bepless.hawkingrei.com";
-  bazelConfig.textContent = [
+  if (bazelConfig) {
+    bazelConfig.textContent = [
     `build --bes_backend=grpcs://${grpcHost}`,
     `test --bes_backend=grpcs://${grpcHost}`,
     `build --bes_results_url=${workerOrigin}/`,
@@ -214,25 +203,32 @@ function renderSetupSnippets() {
     "test --build_event_publish_all_actions",
     "build --experimental_build_event_upload_strategy=fully_async",
     "test --experimental_build_event_upload_strategy=fully_async",
-  ].join("\n");
-  sinkConfig.textContent = [
+    ].join("\n");
+  }
+  if (sinkConfig) {
+    sinkConfig.textContent = [
     `BEPLESS_HTTP_SINK_URL=${workerOrigin}/ingest`,
     "BEPLESS_HTTP_SINK_TIMEOUT_SECONDS=30",
-  ].join("\n");
+    ].join("\n");
+  }
 }
 
 async function copyBazelConfig() {
   try {
-    await navigator.clipboard.writeText(bazelConfig.textContent);
-    copyBazelConfigStatus.textContent = "Copied Bazel config.";
+    await navigator.clipboard.writeText(bazelConfig?.textContent || "");
+    if (copyBazelConfigStatus) {
+      copyBazelConfigStatus.textContent = "Copied Bazel config.";
+    }
   } catch (error) {
     console.error(error);
-    copyBazelConfigStatus.textContent = "Copy failed. Select the snippet manually.";
+    if (copyBazelConfigStatus) {
+      copyBazelConfigStatus.textContent = "Copy failed. Select the snippet manually.";
+    }
   }
 }
 
 async function loadReview(reviewId) {
-  status.textContent = `Loading review #${reviewId}...`;
+  setAppStoreState({ statusText: `Loading review #${reviewId}...` });
 
   const [review, ingestBody] = await Promise.all([
     fetchReviewMetadata(reviewId),
@@ -241,6 +237,7 @@ async function loadReview(reviewId) {
   const browserInsights = summarizeBrowserInsights(ingestBody, review.analysis);
   historySummaryCache.set(review.id, browserInsights);
   currentReviewId = review.id;
+  setAppStoreState({ currentReviewId: review.id });
   renderHistory(currentHistoryReviews);
   activeFlakyLabel = resolveActiveFlakyLabel(browserInsights, activeFlakyLabel);
   window.__lastBrowserInsights = browserInsights;
@@ -250,19 +247,21 @@ async function loadReview(reviewId) {
     rowLimit: currentTimelineRowLimit(),
   });
   syncInvocationPath(review.invocation_id || browserInsights.analysis.summary.invocation_id || null);
-  status.textContent = `Showing review #${review.id} from ${new Date(review.uploaded_at_ms).toLocaleString()}.`;
+  setAppStoreState({
+    statusText: `Showing review #${review.id} from ${new Date(review.uploaded_at_ms).toLocaleString()}.`,
+  });
 }
 
 async function fetchReviews(updateStatus = true, options = {}) {
   const { hydrateHistory = true } = options;
   if (updateStatus) {
-    status.textContent = "Loading uploaded reviews...";
+    setAppStoreState({ statusText: "Loading uploaded reviews..." });
   }
 
   const response = await fetch("/api/reviews", { cache: "no-store" });
   if (!response.ok) {
     const message = "Failed to load uploaded reviews.";
-    status.textContent = message;
+    setAppStoreState({ statusText: message });
     throw new Error(message);
   }
 
@@ -276,10 +275,12 @@ async function findInvocationReviewWithRetry(invocationId, updateStatus = true) 
 
   for (let attempt = 1; attempt <= INVOCATION_LOOKUP_MAX_ATTEMPTS; attempt += 1) {
     if (updateStatus) {
-      status.textContent =
-        attempt === 1
-          ? `Loading invocation ${decodedInvocationId}...`
-          : `Invocation ${decodedInvocationId} not visible yet. Retrying ${attempt}/${INVOCATION_LOOKUP_MAX_ATTEMPTS}...`;
+      setAppStoreState({
+        statusText:
+          attempt === 1
+            ? `Loading invocation ${decodedInvocationId}...`
+            : `Invocation ${decodedInvocationId} not visible yet. Retrying ${attempt}/${INVOCATION_LOOKUP_MAX_ATTEMPTS}...`,
+      });
     }
 
     const reviews = await fetchReviews(false, { hydrateHistory: false });
@@ -306,7 +307,7 @@ async function boot() {
   try {
     const reviews = await fetchReviews();
     if (reviews.length === 0) {
-      status.textContent = "Waiting for BES uploads.";
+      setAppStoreState({ statusText: "Waiting for BES uploads." });
       return;
     }
 
@@ -323,14 +324,18 @@ async function boot() {
       }
 
       currentReviewId = null;
+      setAppStoreState({ currentReviewId: null });
       renderHistory(retriedReviews);
       activeFlakyLabel = null;
       resetReviewPanels(`Invocation ${decodeURIComponent(invocationId)} was not found in the latest 50 reviews.`);
-      status.textContent = `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`;
+      setAppStoreState({
+        statusText: `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`,
+      });
       return;
     }
 
     currentReviewId = reviews[0].id;
+    setAppStoreState({ currentReviewId: reviews[0].id });
     renderHistory(reviews);
     await loadReview(reviews[0].id);
   } catch (error) {
@@ -340,21 +345,25 @@ async function boot() {
   }
 }
 
-refreshBtn.addEventListener("click", async () => {
+export async function refreshReviews() {
   try {
     const invocationId = currentInvocationPath();
     if (invocationId) {
       const { reviews, matchedReview } = await findInvocationReviewWithRetry(invocationId);
       if (matchedReview) {
         currentReviewId = matchedReview.id;
+        setAppStoreState({ currentReviewId: matchedReview.id });
         renderHistory(reviews);
         await loadReview(matchedReview.id);
       } else {
         currentReviewId = null;
+        setAppStoreState({ currentReviewId: null });
         renderHistory(reviews);
         activeFlakyLabel = null;
         resetReviewPanels(`Invocation ${decodeURIComponent(invocationId)} was not found in the latest 50 reviews.`);
-        status.textContent = `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`;
+        setAppStoreState({
+          statusText: `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`,
+        });
       }
       return;
     }
@@ -362,34 +371,55 @@ refreshBtn.addEventListener("click", async () => {
     const reviews = await fetchReviews();
     if (reviews.length === 0) {
       currentReviewId = null;
+      setAppStoreState({ currentReviewId: null });
       activeFlakyLabel = null;
       resetReviewPanels();
-      status.textContent = "Waiting for BES uploads.";
+      setAppStoreState({ statusText: "Waiting for BES uploads." });
       return;
     }
 
     const target = reviews.some((review) => review.id === currentReviewId) ? currentReviewId : reviews[0].id;
     currentReviewId = target;
+    setAppStoreState({ currentReviewId: target });
     renderHistory(reviews);
     await loadReview(target);
   } catch (error) {
     console.error(error);
   }
-});
-
-copyBazelConfigBtn.addEventListener("click", async () => {
-  await copyBazelConfig();
-});
-
-for (const button of tabButtons) {
-  button.addEventListener("click", () => {
-    setActiveTab(button.dataset.tab || "summary");
-  });
 }
 
-for (const button of timelineFilterButtons) {
-  button.addEventListener("click", () => {
-    setActiveTimelineFilter(button.dataset.timelineFilter || "all");
+export async function openReviewById(reviewId: number) {
+  if (!Number.isFinite(reviewId)) return;
+  try {
+    await loadReview(reviewId);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+export function activateTab(tab: string) {
+  setActiveTab(tab || "summary");
+}
+
+function bindEvents() {
+
+  copyBazelConfigBtn?.addEventListener("click", async () => {
+    await copyBazelConfig();
+  });
+
+  for (const button of timelineFilterButtons) {
+    button.addEventListener("click", () => {
+      setActiveTimelineFilter(button.dataset.timelineFilter || "all");
+      if (window.__lastBrowserInsights) {
+        renderTimeline(window.__lastBrowserInsights, {
+          activeTimelineFilter,
+          rowLimit: currentTimelineRowLimit(),
+        });
+      }
+    });
+  }
+
+  timelineLimit?.addEventListener("change", () => {
     if (window.__lastBrowserInsights) {
       renderTimeline(window.__lastBrowserInsights, {
         activeTimelineFilter,
@@ -397,44 +427,25 @@ for (const button of timelineFilterButtons) {
       });
     }
   });
+
+  flakyTestsList?.addEventListener("click", (event) => {
+    const item = (event.target as HTMLElement | null)?.closest("[data-flaky-label]");
+    if (!item) return;
+    activeFlakyLabel = (item as HTMLElement).dataset.flakyLabel || null;
+    const reviewPanel = document.querySelector('[data-tab-panel="hotspots"]');
+    if (!reviewPanel || reviewPanel.classList.contains("hidden")) {
+      setActiveTab("hotspots");
+    }
+    if (window.__lastBrowserInsights) {
+      renderFlakyAttempts(window.__lastBrowserInsights, activeFlakyLabel);
+    }
+  });
 }
 
-timelineLimit?.addEventListener("change", () => {
-  if (window.__lastBrowserInsights) {
-    renderTimeline(window.__lastBrowserInsights, {
-      activeTimelineFilter,
-      rowLimit: currentTimelineRowLimit(),
-    });
-  }
-});
-
-historyList.addEventListener("click", async (event) => {
-  const item = event.target.closest("[data-review-id]");
-  if (!item) return;
-
-  const reviewId = Number(item.dataset.reviewId);
-  if (!Number.isFinite(reviewId)) return;
-
-  try {
-    await loadReview(reviewId);
-  } catch (error) {
-    console.error(error);
-  }
-});
-
-flakyTestsList.addEventListener("click", (event) => {
-  const item = event.target.closest("[data-flaky-label]");
-  if (!item) return;
-  activeFlakyLabel = item.dataset.flakyLabel || null;
-  const reviewPanel = document.querySelector('[data-tab-panel="hotspots"]');
-  if (!reviewPanel || reviewPanel.classList.contains("hidden")) {
-    setActiveTab("hotspots");
-  }
-  if (window.__lastBrowserInsights) {
-    renderFlakyAttempts(window.__lastBrowserInsights, activeFlakyLabel);
-  }
-});
-
-boot();
-setActiveTab(activeTab);
-setActiveTimelineFilter(activeTimelineFilter);
+export async function bootstrapApp() {
+  initDom();
+  bindEvents();
+  await boot();
+  setActiveTab(activeTab);
+  setActiveTimelineFilter(activeTimelineFilter);
+}

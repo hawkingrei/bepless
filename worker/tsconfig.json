@@ -4,9 +4,10 @@
     "lib": ["DOM", "ES2020"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
     "strict": false,
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["web-src/**/*.ts"]
+  "include": ["web-src/**/*.ts", "web-src/**/*.tsx"]
 }
