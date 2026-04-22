@@ -203,6 +203,18 @@ struct StoredReviewDetail {
     ingest_body: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredReviewMetadata {
+    id: i64,
+    source_type: String,
+    project_id: Option<String>,
+    build_id: Option<String>,
+    invocation_id: Option<String>,
+    notification_keywords: Vec<String>,
+    uploaded_at_ms: i64,
+    analysis: AnalysisResponse,
+}
+
 #[derive(Debug, Deserialize)]
 struct StoredReviewRow {
     id: i64,
@@ -543,6 +555,9 @@ async fn fetch(mut req: Request, env: worker::Env, _ctx: Context) -> Result<Resp
         (Method::Options, _) => cors_response(),
         (Method::Get, "/") => html_response(),
         (Method::Get, "/api/reviews") => list_reviews(&env).await,
+        (Method::Get, path) if path.starts_with("/api/reviews/") && path.ends_with("/body") => {
+            get_review_body(&env, path).await
+        }
         (Method::Get, path) if path.starts_with("/api/reviews/") => get_review(&env, path).await,
         (Method::Get, path) if is_review_entry_path(path) => html_response(),
         (Method::Post, "/analyze") => analyze_request(&mut req).await,
@@ -855,22 +870,8 @@ async fn list_reviews(env: &worker::Env) -> Result<Response> {
 }
 
 async fn get_review(env: &worker::Env, path: &str) -> Result<Response> {
-    let review_id = path
-        .trim_start_matches("/api/reviews/")
-        .parse::<i64>()
-        .map_err(|_| worker::Error::RustError("Review id must be an integer".into()))?;
-
-    let db = open_database(env)?;
-
-    let statement = db
-        .prepare(
-            "SELECT id, source_type, project_id, build_id, invocation_id, notification_keywords_json, uploaded_at_ms, analysis_json, ingest_body
-             FROM reviews
-             WHERE id = ?1
-             LIMIT 1",
-        )
-        .bind(&[JsValue::from_f64(review_id as f64)])?;
-    let row = statement.first::<StoredReviewRow>(None).await?;
+    let review_id = parse_review_id(path, false)?;
+    let row = fetch_review_row(env, review_id).await?;
     let Some(row) = row else {
         log_info(
             "review_not_found",
@@ -885,7 +886,7 @@ async fn get_review(env: &worker::Env, path: &str) -> Result<Response> {
             row.id, err
         ))
     })?;
-    let payload = StoredReviewDetail {
+    let payload = StoredReviewMetadata {
         id: row.id,
         source_type: row.source_type,
         project_id: row.project_id,
@@ -894,7 +895,6 @@ async fn get_review(env: &worker::Env, path: &str) -> Result<Response> {
         notification_keywords: parse_keywords_json(&row.notification_keywords_json)?,
         uploaded_at_ms: row.uploaded_at_ms,
         analysis,
-        ingest_body: resolve_stored_ingest_body(env, &row.ingest_body).await?,
     };
 
     let mut response = Response::from_json(&payload)?;
@@ -902,6 +902,21 @@ async fn get_review(env: &worker::Env, path: &str) -> Result<Response> {
         .headers_mut()
         .set("content-type", "application/json; charset=utf-8")?;
     set_no_store_headers(response.headers_mut())?;
+    apply_cors(response)
+}
+
+async fn get_review_body(env: &worker::Env, path: &str) -> Result<Response> {
+    let review_id = parse_review_id(path, true)?;
+    let row = fetch_review_row(env, review_id).await?;
+    let Some(row) = row else {
+        log_info(
+            "review_body_not_found",
+            vec![("review_id", review_id.to_string())],
+        );
+        return json_error(404, "review_not_found", "Review not found");
+    };
+
+    let response = resolve_stored_ingest_body_response(env, &row.ingest_body).await?;
     apply_cors(response)
 }
 
@@ -1308,6 +1323,69 @@ async fn resolve_stored_ingest_body(env: &worker::Env, stored_value: &str) -> Re
         .await
 }
 
+async fn resolve_stored_ingest_body_response(
+    env: &worker::Env,
+    stored_value: &str,
+) -> Result<Response> {
+    let Some(object_key) = stored_value.strip_prefix(REVIEW_BODY_POINTER_PREFIX) else {
+        let mut response = Response::ok(stored_value.to_string())?;
+        response
+            .headers_mut()
+            .set("content-type", "text/plain; charset=utf-8")?;
+        set_no_store_headers(response.headers_mut())?;
+        return Ok(response);
+    };
+
+    let bucket = open_chunk_bucket(env)?;
+    let object = bucket.get(object_key.to_string()).execute().await?;
+    let Some(object) = object else {
+        return Err(worker::Error::RustError(format!(
+            "Stored review body object is missing from R2: {}",
+            object_key
+        )));
+    };
+    let body = object
+        .body()
+        .ok_or_else(|| {
+            worker::Error::RustError(format!(
+                "Stored review body object has no body in R2: {}",
+                object_key
+            ))
+        })?
+        .response_body()?;
+
+    let mut response = Response::builder()
+        .with_header("content-type", "text/plain; charset=utf-8")?
+        .body(body);
+    set_no_store_headers(response.headers_mut())?;
+    Ok(response)
+}
+
+fn parse_review_id(path: &str, body_path: bool) -> Result<i64> {
+    let trimmed = path.trim_start_matches("/api/reviews/");
+    let raw_id = if body_path {
+        trimmed.trim_end_matches("/body")
+    } else {
+        trimmed
+    };
+    raw_id
+        .parse::<i64>()
+        .map_err(|_| worker::Error::RustError("Review id must be an integer".into()))
+}
+
+async fn fetch_review_row(env: &worker::Env, review_id: i64) -> Result<Option<StoredReviewRow>> {
+    let db = open_database(env)?;
+    db.prepare(
+        "SELECT id, source_type, project_id, build_id, invocation_id, notification_keywords_json, uploaded_at_ms, analysis_json, ingest_body
+         FROM reviews
+         WHERE id = ?1
+         LIMIT 1",
+    )
+    .bind(&[JsValue::from_f64(review_id as f64)])?
+    .first::<StoredReviewRow>(None)
+    .await
+}
+
 fn decode_chunk_body(payload: &IngestChunkRequest) -> Result<String> {
     match payload.compression.as_deref() {
         Some("gzip") => {
@@ -1534,18 +1612,16 @@ fn convert_proto_event_to_json(event: &build_event_stream::BuildEvent) -> Option
             object.insert("configured".to_string(), Value::Object(configured_object));
         }
         build_event_stream::build_event::Payload::Completed(completed) => {
-            object.insert(
-                "completed".to_string(),
-                json!({
-                    "success": completed.success,
-                }),
-            );
+            object.insert("completed".to_string(), convert_target_completed(completed));
         }
         build_event_stream::build_event::Payload::TestResult(test_result) => {
             object.insert("testResult".to_string(), convert_test_result(test_result));
         }
         build_event_stream::build_event::Payload::Action(action) => {
             object.insert("action".to_string(), convert_action_executed(action));
+        }
+        build_event_stream::build_event::Payload::NamedSetOfFiles(named_set) => {
+            object.insert("namedSetOfFiles".to_string(), convert_named_set_of_files(named_set));
         }
         build_event_stream::build_event::Payload::TestSummary(test_summary) => {
             object.insert(
@@ -1575,6 +1651,12 @@ fn convert_proto_event_to_json(event: &build_event_stream::BuildEvent) -> Option
         build_event_stream::build_event::Payload::BuildMetrics(metrics) => {
             object.insert("buildMetrics".to_string(), convert_build_metrics(metrics));
         }
+        build_event_stream::build_event::Payload::BuildToolLogs(build_tool_logs) => {
+            object.insert(
+                "buildToolLogs".to_string(),
+                convert_build_tool_logs(build_tool_logs),
+            );
+        }
         _ => return None,
     }
 
@@ -1590,6 +1672,11 @@ fn convert_event_id(id: Option<&build_event_stream::BuildEventId>) -> Option<Val
             json!({ "buildFinished": {} })
         }
         build_event_stream::build_event_id::Id::BuildMetrics(_) => json!({ "buildMetrics": {} }),
+        build_event_stream::build_event_id::Id::NamedSet(named_set) => json!({
+            "namedSet": {
+                "id": named_set.id.clone(),
+            }
+        }),
         build_event_stream::build_event_id::Id::TargetConfigured(target) => json!({
             "targetConfigured": {
                 "label": target.label,
@@ -1630,6 +1717,9 @@ fn convert_event_id(id: Option<&build_event_stream::BuildEventId>) -> Option<Val
                 "shard": test.shard,
                 "attempt": test.attempt,
             }
+        }),
+        build_event_stream::build_event_id::Id::BuildToolLogs(_) => json!({
+            "buildToolLogs": {}
         }),
         _ => return None,
     })
@@ -1722,14 +1812,54 @@ fn convert_options_parsed(options: &build_event_stream::OptionsParsed) -> Value 
     })
 }
 
+#[allow(deprecated)]
+fn convert_target_completed(completed: &build_event_stream::TargetComplete) -> Value {
+    json!({
+        "success": completed.success,
+        "outputGroup": completed.output_group.iter().map(convert_output_group).collect::<Vec<_>>(),
+        "importantOutput": completed.important_output.iter().map(convert_file).collect::<Vec<_>>(),
+        "directoryOutput": completed.directory_output.iter().map(convert_file).collect::<Vec<_>>(),
+    })
+}
+
+fn convert_named_set_of_files(named_set: &build_event_stream::NamedSetOfFiles) -> Value {
+    json!({
+        "files": named_set.files.iter().map(convert_file).collect::<Vec<_>>(),
+        "fileSets": named_set.file_sets.iter().map(|file_set| {
+            json!({
+                "id": file_set.id.clone(),
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn convert_output_group(output_group: &build_event_stream::OutputGroup) -> Value {
+    json!({
+        "name": output_group.name,
+        "incomplete": output_group.incomplete,
+        "fileSets": output_group.file_sets.iter().map(|file_set| {
+            json!({
+                "id": file_set.id.clone(),
+            })
+        }).collect::<Vec<_>>(),
+        "inlineFiles": output_group.inline_files.iter().map(convert_file).collect::<Vec<_>>(),
+    })
+}
+
+fn convert_build_tool_logs(build_tool_logs: &build_event_stream::BuildToolLogs) -> Value {
+    json!({
+        "log": build_tool_logs.log.iter().map(convert_file).collect::<Vec<_>>(),
+    })
+}
+
 fn convert_action_executed(action: &build_event_stream::ActionExecuted) -> Value {
     json!({
         "success": action.success,
         "type": action.r#type,
         "exitCode": action.exit_code,
-        "primaryOutput": action.primary_output.as_ref().map(|file| file.name.clone()).unwrap_or_default(),
-        "stdout": action.stdout.as_ref().map(|file| file.name.clone()).unwrap_or_default(),
-        "stderr": action.stderr.as_ref().map(|file| file.name.clone()).unwrap_or_default(),
+        "primaryOutput": action.primary_output.as_ref().map(convert_file),
+        "stdout": action.stdout.as_ref().map(convert_file),
+        "stderr": action.stderr.as_ref().map(convert_file),
         "commandLine": action.command_line,
         "startTimeMillis": proto_timestamp_to_millis(action.start_time.as_ref()).map(|value| value.to_string()),
         "endTimeMillis": proto_timestamp_to_millis(action.end_time.as_ref()).map(|value| value.to_string()),

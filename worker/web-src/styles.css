@@ -28,24 +28,24 @@ body {
 main {
   max-width: 1920px;
   margin: 0 auto;
-  padding: 18px 12px 60px;
+  padding: 14px 10px 48px;
 }
 
 .shell {
   display: grid;
-  gap: 22px;
+  gap: 16px;
 }
 
 .content-column {
   display: grid;
-  gap: 22px;
+  gap: 16px;
 }
 
 .hero {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 28px;
-  padding: 22px 24px;
+  padding: 18px 20px;
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
 }
@@ -80,7 +80,7 @@ p {
 .hero-top {
   display: flex;
   justify-content: space-between;
-  gap: 24px;
+  gap: 16px;
   align-items: flex-start;
 }
 
@@ -98,9 +98,9 @@ p {
 .setup-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
+  gap: 12px;
   align-items: start;
-  margin-top: 24px;
+  margin-top: 16px;
 }
 
 .hidden {
@@ -111,7 +111,7 @@ p {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 18px;
-  padding: 16px 18px;
+  padding: 12px 14px;
 }
 
 .setup-card {
@@ -120,7 +120,7 @@ p {
 
 button {
   appearance: none;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 999px;
   background: var(--accent);
   color: white;
@@ -128,7 +128,12 @@ button {
   font: inherit;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 120ms ease, background 120ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
 }
 
 button:hover {
@@ -159,31 +164,57 @@ button.secondary:hover {
 
 .section-block {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .tab-strip {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
+  padding: 6px;
+  border-radius: 22px;
+  background: rgba(27, 28, 29, 0.05);
+  border: 1px solid rgba(105, 95, 78, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 
-.tab-button {
-  background: rgba(27, 28, 29, 0.08);
+.tab-strip .tab-button {
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 9px 13px;
+  background: transparent;
   color: var(--ink);
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+  font: 13px/1.2 "IBM Plex Mono", monospace;
+  letter-spacing: 0.01em;
 }
 
-.tab-button:hover {
-  background: rgba(27, 28, 29, 0.14);
+.tab-strip .tab-button:hover {
+  background: rgba(27, 28, 29, 0.08);
+  border-color: rgba(27, 28, 29, 0.08);
+  transform: none;
 }
 
-.tab-button-active {
-  background: var(--accent);
-  color: white;
+.tab-strip .tab-button.tab-button-active {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(11, 110, 79, 0.28);
+  color: var(--accent-strong);
+  box-shadow:
+    0 8px 18px rgba(57, 49, 35, 0.08),
+    0 0 0 1px rgba(11, 110, 79, 0.08);
 }
 
-.tab-button-active:hover {
-  background: var(--accent-strong);
+.tab-strip .tab-button.tab-button-active:hover {
+  background: rgba(255, 255, 255, 1);
+  border-color: rgba(8, 76, 57, 0.34);
+  transform: none;
+}
+
+.tab-strip .tab-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(11, 110, 79, 0.18);
 }
 
 .timeline-summary {
@@ -191,27 +222,51 @@ button.secondary:hover {
 }
 
 .timeline-toolbar {
-  margin-top: 16px;
+  margin-top: 12px;
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  gap: 12px 18px;
+  gap: 10px 14px;
   align-items: center;
 }
 
 .timeline-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 18px;
+  background: rgba(27, 28, 29, 0.04);
+  border: 1px solid rgba(105, 95, 78, 0.12);
 }
 
-.timeline-filter-button-active {
-  background: var(--accent);
-  color: white;
+.timeline-filters .timeline-filter-button {
+  padding: 8px 12px;
 }
 
-.timeline-filter-button-active:hover {
-  background: var(--accent-strong);
+.timeline-filters .timeline-filter-button.timeline-filter-button-active {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(11, 110, 79, 0.28);
+  color: var(--accent-strong);
+  box-shadow:
+    0 6px 16px rgba(57, 49, 35, 0.06),
+    0 0 0 1px rgba(11, 110, 79, 0.08);
+}
+
+.timeline-filters .timeline-filter-button.timeline-filter-button-active:hover {
+  background: rgba(255, 255, 255, 1);
+  border-color: rgba(8, 76, 57, 0.34);
+}
+
+.timeline-filters .timeline-filter-button:hover,
+.timeline-filters .timeline-filter-button.timeline-filter-button-active:hover,
+.timeline-filters .timeline-filter-button:focus-visible {
+  transform: none;
+}
+
+.timeline-filters .timeline-filter-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(11, 110, 79, 0.18);
 }
 
 .timeline-limit-label {
@@ -290,6 +345,7 @@ button.secondary:hover {
   background: rgba(153, 27, 27, 0.14);
   border-color: rgba(153, 27, 27, 0.34);
   color: var(--ink);
+  box-shadow: 0 0 0 1px rgba(153, 27, 27, 0.16), 0 0 0 4px rgba(153, 27, 27, 0.06);
 }
 
 .timeline-vis .vis-item.timeline-vis-item-build {
@@ -301,6 +357,56 @@ button.secondary:hover {
 .timeline-vis .vis-item.timeline-vis-item-background {
   background: rgba(11, 110, 79, 0.06);
   border: 0;
+}
+
+.timeline-vis .vis-selected {
+  box-shadow: 0 0 0 2px rgba(11, 110, 79, 0.45);
+}
+
+.timeline-detail {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.62);
+  display: grid;
+  gap: 10px;
+}
+
+.timeline-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 18px;
+}
+
+.timeline-detail-row {
+  display: grid;
+  gap: 4px;
+}
+
+.timeline-detail-label {
+  color: var(--muted);
+  font: 11px/1.3 "IBM Plex Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.timeline-detail-value {
+  color: var(--ink);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.timeline-detail-pre {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(27, 28, 29, 0.05);
+  border: 1px solid var(--border);
+  font: 12px/1.5 "IBM Plex Mono", monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .timeline-row {
@@ -392,7 +498,7 @@ button.secondary:hover {
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
+  gap: 12px;
 }
 
 .grid-span-2 {
@@ -401,8 +507,8 @@ button.secondary:hover {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.75fr) 420px;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1.82fr) 380px;
+  gap: 14px;
 }
 
 h2 {
@@ -558,9 +664,9 @@ li {
 }
 
 .tag-block {
-  margin-top: 18px;
+  margin-top: 14px;
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .tag-list {
@@ -603,7 +709,30 @@ li {
   color: var(--muted);
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px 10px;
+  gap: 4px 8px;
+}
+
+body.review-entry .shell,
+body.review-entry .content-column {
+  gap: 12px;
+}
+
+body.review-entry .hero {
+  padding: 12px 14px;
+  border-radius: 20px;
+}
+
+body.review-entry .hero-copy {
+  display: none;
+}
+
+body.review-entry .hero-top {
+  align-items: center;
+}
+
+body.review-entry .hero-actions {
+  min-width: 0;
+  justify-items: start;
 }
 
 .history-item .mono {
@@ -673,6 +802,10 @@ li {
 
   .timeline-meta {
     text-align: right;
+  }
+
+  .timeline-detail-grid {
+    grid-template-columns: 1fr;
   }
 
   .history-meta {

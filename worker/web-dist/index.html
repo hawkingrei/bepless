@@ -37,24 +37,24 @@ body {
 main {
   max-width: 1920px;
   margin: 0 auto;
-  padding: 18px 12px 60px;
+  padding: 14px 10px 48px;
 }
 
 .shell {
   display: grid;
-  gap: 22px;
+  gap: 16px;
 }
 
 .content-column {
   display: grid;
-  gap: 22px;
+  gap: 16px;
 }
 
 .hero {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 28px;
-  padding: 22px 24px;
+  padding: 18px 20px;
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
 }
@@ -89,7 +89,7 @@ p {
 .hero-top {
   display: flex;
   justify-content: space-between;
-  gap: 24px;
+  gap: 16px;
   align-items: flex-start;
 }
 
@@ -107,9 +107,9 @@ p {
 .setup-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
+  gap: 12px;
   align-items: start;
-  margin-top: 24px;
+  margin-top: 16px;
 }
 
 .hidden {
@@ -120,7 +120,7 @@ p {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 18px;
-  padding: 16px 18px;
+  padding: 12px 14px;
 }
 
 .setup-card {
@@ -129,7 +129,7 @@ p {
 
 button {
   appearance: none;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 999px;
   background: var(--accent);
   color: white;
@@ -137,7 +137,12 @@ button {
   font: inherit;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 120ms ease, background 120ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
 }
 
 button:hover {
@@ -168,31 +173,57 @@ button.secondary:hover {
 
 .section-block {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .tab-strip {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
+  padding: 6px;
+  border-radius: 22px;
+  background: rgba(27, 28, 29, 0.05);
+  border: 1px solid rgba(105, 95, 78, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 
-.tab-button {
-  background: rgba(27, 28, 29, 0.08);
+.tab-strip .tab-button {
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 9px 13px;
+  background: transparent;
   color: var(--ink);
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+  font: 13px/1.2 "IBM Plex Mono", monospace;
+  letter-spacing: 0.01em;
 }
 
-.tab-button:hover {
-  background: rgba(27, 28, 29, 0.14);
+.tab-strip .tab-button:hover {
+  background: rgba(27, 28, 29, 0.08);
+  border-color: rgba(27, 28, 29, 0.08);
+  transform: none;
 }
 
-.tab-button-active {
-  background: var(--accent);
-  color: white;
+.tab-strip .tab-button.tab-button-active {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(11, 110, 79, 0.28);
+  color: var(--accent-strong);
+  box-shadow:
+    0 8px 18px rgba(57, 49, 35, 0.08),
+    0 0 0 1px rgba(11, 110, 79, 0.08);
 }
 
-.tab-button-active:hover {
-  background: var(--accent-strong);
+.tab-strip .tab-button.tab-button-active:hover {
+  background: rgba(255, 255, 255, 1);
+  border-color: rgba(8, 76, 57, 0.34);
+  transform: none;
+}
+
+.tab-strip .tab-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(11, 110, 79, 0.18);
 }
 
 .timeline-summary {
@@ -200,27 +231,51 @@ button.secondary:hover {
 }
 
 .timeline-toolbar {
-  margin-top: 16px;
+  margin-top: 12px;
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  gap: 12px 18px;
+  gap: 10px 14px;
   align-items: center;
 }
 
 .timeline-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 18px;
+  background: rgba(27, 28, 29, 0.04);
+  border: 1px solid rgba(105, 95, 78, 0.12);
 }
 
-.timeline-filter-button-active {
-  background: var(--accent);
-  color: white;
+.timeline-filters .timeline-filter-button {
+  padding: 8px 12px;
 }
 
-.timeline-filter-button-active:hover {
-  background: var(--accent-strong);
+.timeline-filters .timeline-filter-button.timeline-filter-button-active {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(11, 110, 79, 0.28);
+  color: var(--accent-strong);
+  box-shadow:
+    0 6px 16px rgba(57, 49, 35, 0.06),
+    0 0 0 1px rgba(11, 110, 79, 0.08);
+}
+
+.timeline-filters .timeline-filter-button.timeline-filter-button-active:hover {
+  background: rgba(255, 255, 255, 1);
+  border-color: rgba(8, 76, 57, 0.34);
+}
+
+.timeline-filters .timeline-filter-button:hover,
+.timeline-filters .timeline-filter-button.timeline-filter-button-active:hover,
+.timeline-filters .timeline-filter-button:focus-visible {
+  transform: none;
+}
+
+.timeline-filters .timeline-filter-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(11, 110, 79, 0.18);
 }
 
 .timeline-limit-label {
@@ -299,6 +354,7 @@ button.secondary:hover {
   background: rgba(153, 27, 27, 0.14);
   border-color: rgba(153, 27, 27, 0.34);
   color: var(--ink);
+  box-shadow: 0 0 0 1px rgba(153, 27, 27, 0.16), 0 0 0 4px rgba(153, 27, 27, 0.06);
 }
 
 .timeline-vis .vis-item.timeline-vis-item-build {
@@ -310,6 +366,56 @@ button.secondary:hover {
 .timeline-vis .vis-item.timeline-vis-item-background {
   background: rgba(11, 110, 79, 0.06);
   border: 0;
+}
+
+.timeline-vis .vis-selected {
+  box-shadow: 0 0 0 2px rgba(11, 110, 79, 0.45);
+}
+
+.timeline-detail {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.62);
+  display: grid;
+  gap: 10px;
+}
+
+.timeline-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 18px;
+}
+
+.timeline-detail-row {
+  display: grid;
+  gap: 4px;
+}
+
+.timeline-detail-label {
+  color: var(--muted);
+  font: 11px/1.3 "IBM Plex Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.timeline-detail-value {
+  color: var(--ink);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.timeline-detail-pre {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(27, 28, 29, 0.05);
+  border: 1px solid var(--border);
+  font: 12px/1.5 "IBM Plex Mono", monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .timeline-row {
@@ -401,7 +507,7 @@ button.secondary:hover {
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
+  gap: 12px;
 }
 
 .grid-span-2 {
@@ -410,8 +516,8 @@ button.secondary:hover {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.75fr) 420px;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1.82fr) 380px;
+  gap: 14px;
 }
 
 h2 {
@@ -567,9 +673,9 @@ li {
 }
 
 .tag-block {
-  margin-top: 18px;
+  margin-top: 14px;
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .tag-list {
@@ -612,7 +718,30 @@ li {
   color: var(--muted);
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px 10px;
+  gap: 4px 8px;
+}
+
+body.review-entry .shell,
+body.review-entry .content-column {
+  gap: 12px;
+}
+
+body.review-entry .hero {
+  padding: 12px 14px;
+  border-radius: 20px;
+}
+
+body.review-entry .hero-copy {
+  display: none;
+}
+
+body.review-entry .hero-top {
+  align-items: center;
+}
+
+body.review-entry .hero-actions {
+  min-width: 0;
+  justify-items: start;
 }
 
 .history-item .mono {
@@ -682,6 +811,10 @@ li {
 
   .timeline-meta {
     text-align: right;
+  }
+
+  .timeline-detail-grid {
+    grid-template-columns: 1fr;
   }
 
   .history-meta {
@@ -821,6 +954,7 @@ li {
                 <div id="timeline-chart" class="timeline-chart">
                   <div class="muted">No uploaded reviews yet.</div>
                 </div>
+                <div id="timeline-detail" class="timeline-detail muted">Select a timeline item to inspect its details.</div>
               </section>
             </section>
 
@@ -907,6 +1041,16 @@ li {
                 <section class="panel">
                   <h3>Top Test Execution Wall Time</h3>
                   <ul id="test-exec-wall-top-list">
+                    <li class="muted">No uploaded reviews yet.</li>
+                  </ul>
+                </section>
+                <section class="panel grid-span-2">
+                  <h3>Artifact References</h3>
+                  <p class="muted section-copy">
+                    File references reported by BEP events such as `testActionOutput`,
+                    `namedSetOfFiles`, `outputGroup`, `buildToolLogs`, and action stdio.
+                  </p>
+                  <ul id="artifact-references-list">
                     <li class="muted">No uploaded reviews yet.</li>
                   </ul>
                 </section>
@@ -5026,6 +5170,7 @@ li {
   var keywordList = document.getElementById("keyword-list");
   var timelineSummary = document.getElementById("timeline-summary");
   var timelineChart = document.getElementById("timeline-chart");
+  var timelineDetail = document.getElementById("timeline-detail");
   var timelineFilterButtons = Array.from(document.querySelectorAll("[data-timeline-filter]"));
   var timelineLimit = document.getElementById("timeline-limit");
   var hostJvmArgsList = document.getElementById("host-jvm-args-list");
@@ -5042,6 +5187,7 @@ li {
   var compileTopList = document.getElementById("compile-top-list");
   var ioTopList = document.getElementById("io-top-list");
   var testExecWallTopList = document.getElementById("test-exec-wall-top-list");
+  var artifactReferencesList = document.getElementById("artifact-references-list");
   var slowActionsList = document.getElementById("slow-actions-list");
   var slowTestsList = document.getElementById("slow-tests-list");
   var actionsList = document.getElementById("actions-list");
@@ -5290,6 +5436,7 @@ li {
     const testStrategyCounts = {};
     const timingBreakdownMs = {};
     const topActionEntries = [];
+    const artifactReferences = [];
     let abortReason = null;
     let abortDescription = null;
     let firstErrorLine = null;
@@ -5329,6 +5476,27 @@ li {
     let invocationWindow = null;
     const workerMetrics = [];
     let timelineItemId = 0;
+    function pushArtifactReference(source, file, extra = {}) {
+      if (!file || typeof file !== "object") return;
+      const uri = typeof file.uri === "string" && file.uri.trim() ? file.uri.trim() : null;
+      const name = typeof file.name === "string" && file.name.trim() ? file.name.trim() : null;
+      const pathPrefix = Array.isArray(file.pathPrefix) ? file.pathPrefix.filter(Boolean) : [];
+      const digest = typeof file.digest === "string" && file.digest ? file.digest : null;
+      const symlinkTargetPath = typeof file.symlinkTargetPath === "string" && file.symlinkTargetPath ? file.symlinkTargetPath : null;
+      const hasInlineContents = typeof file.contentsBase64 === "string" && file.contentsBase64.length > 0;
+      if (!uri && !hasInlineContents && !symlinkTargetPath) return;
+      artifactReferences.push({
+        source,
+        name,
+        uri,
+        digest,
+        path_prefix: pathPrefix,
+        symlink_target_path: symlinkTargetPath,
+        has_inline_contents: hasInlineContents,
+        is_bytestream: typeof uri === "string" && uri.startsWith("bytestream://"),
+        ...extra
+      });
+    }
     function pushTimelineItem(item) {
       if (item.start_ms === null || item.start_ms === void 0) return;
       timelineItems.push({
@@ -5477,7 +5645,7 @@ li {
         slowActions.push({
           label: actionId.label || "<unknown>",
           mnemonic: action.type || "unknown",
-          primary_output: action.primaryOutput || actionId.primaryOutput || "n/a",
+          primary_output: action.primaryOutput?.name || action.primaryOutput?.uri || actionId.primaryOutput || "n/a",
           duration_ms: durationMs,
           success: action.success,
           exit_code: toNumber(action.exitCode),
@@ -5590,6 +5758,32 @@ li {
             failedTargets.push(label);
           }
         }
+        for (const file of event2.completed?.importantOutput || []) {
+          pushArtifactReference("importantOutput", file, { label });
+        }
+        for (const file of event2.completed?.directoryOutput || []) {
+          pushArtifactReference("directoryOutput", file, { label });
+        }
+        for (const outputGroup of event2.completed?.outputGroup || []) {
+          for (const file of outputGroup.inlineFiles || []) {
+            pushArtifactReference("outputGroup.inlineFiles", file, {
+              label,
+              output_group: outputGroup.name || "unknown",
+              incomplete: outputGroup.incomplete === true
+            });
+          }
+        }
+      }
+      if (event2.id?.namedSet && event2.namedSetOfFiles) {
+        const namedSetId = event2.id.namedSet.id || "<unnamed>";
+        for (const file of event2.namedSetOfFiles.files || []) {
+          pushArtifactReference("namedSetOfFiles", file, { named_set_id: namedSetId });
+        }
+      }
+      if (event2.id?.buildToolLogs && event2.buildToolLogs) {
+        for (const file of event2.buildToolLogs.log || []) {
+          pushArtifactReference("buildToolLogs", file);
+        }
       }
       if (event2.id && event2.id.testSummary && event2.testSummary) {
         const testSummary = event2.testSummary;
@@ -5647,6 +5841,15 @@ li {
         }
         foldTimingBreakdownTotals(timingBreakdown, timingBreakdownMs);
         const attempts = flakyAttemptsByLabel.get(label) || [];
+        for (const file of testResult.testActionOutput || []) {
+          pushArtifactReference("testActionOutput", file, {
+            label,
+            run: toNumber(testId.run),
+            shard: toNumber(testId.shard),
+            attempt: toNumber(testId.attempt),
+            status: testResult.status || "UNKNOWN"
+          });
+        }
         attempts.push({
           label,
           run: toNumber(testId.run),
@@ -5660,6 +5863,27 @@ li {
           outputs: Array.isArray(testResult.testActionOutput) ? testResult.testActionOutput : []
         });
         flakyAttemptsByLabel.set(label, attempts);
+      }
+      if (event2.id?.actionCompleted && event2.action) {
+        const label = event2.id.actionCompleted.label || "<unknown>";
+        if (event2.action.primaryOutput) {
+          pushArtifactReference("action.primaryOutput", event2.action.primaryOutput, {
+            label,
+            mnemonic: event2.action.type || "action"
+          });
+        }
+        if (event2.action.stdout) {
+          pushArtifactReference("action.stdout", event2.action.stdout, {
+            label,
+            mnemonic: event2.action.type || "action"
+          });
+        }
+        if (event2.action.stderr) {
+          pushArtifactReference("action.stderr", event2.action.stderr, {
+            label,
+            mnemonic: event2.action.type || "action"
+          });
+        }
       }
     }
     compileItems.sort((left, right) => right.duration_ms - left.duration_ms);
@@ -5786,7 +6010,11 @@ li {
       slowActions: slowActions.filter((item) => item.duration_ms !== null).slice(0, 10),
       topTests: tests.slice(0, 10),
       flakyTests: flakyTests.slice(0, 10),
-      flakyAttemptsByLabel
+      flakyAttemptsByLabel,
+      artifactReferences: artifactReferences.sort((left, right) => {
+        if (left.is_bytestream !== right.is_bytestream) return left.is_bytestream ? -1 : 1;
+        return String(left.source || "").localeCompare(String(right.source || ""));
+      }).slice(0, 80)
     };
   }
 
@@ -45933,6 +46161,53 @@ li {
     return events;
   }
   var timelineInstance = null;
+  function timelineGroupLabel(group) {
+    if (group === "build") return "Build";
+    if (group === "action") return "Action";
+    if (group === "test") return "Test";
+    return group || "Unknown";
+  }
+  function renderTimelineDetail(item) {
+    if (!timelineDetail) return;
+    if (!item) {
+      timelineDetail.classList.add("muted");
+      timelineDetail.innerHTML = "Select a timeline item to inspect its details.";
+      return;
+    }
+    const durationMs = item.end_ms !== null && item.end_ms !== void 0 ? Math.max(0, item.end_ms - item.start_ms) : null;
+    const rows = [
+      ["Title", item.title || item.content || "n/a"],
+      ["Category", item.category || "n/a"],
+      ["Group", timelineGroupLabel(item.group)],
+      ["Kind", item.item_type || (item.end_ms !== null && item.end_ms !== void 0 ? "range" : "point")],
+      ["Failed", item.failed ? "true" : "false"],
+      ["Started", new Date(item.start_ms).toLocaleString()],
+      ["Finished", item.end_ms !== null && item.end_ms !== void 0 ? new Date(item.end_ms).toLocaleString() : "n/a"],
+      ["Duration", durationMs !== null ? formatMs(durationMs) : "n/a"]
+    ];
+    const detailBlocks = [item.detail, item.content].filter((value, index, source) => value && source.indexOf(value) === index).map(
+      (value) => `
+        <div class="timeline-detail-row">
+          <div class="timeline-detail-label">Detail</div>
+          <pre class="timeline-detail-pre">${escapeHtml(String(value))}</pre>
+        </div>
+      `
+    ).join("");
+    timelineDetail.classList.remove("muted");
+    timelineDetail.innerHTML = `
+    <div class="timeline-detail-grid">
+      ${rows.map(
+      ([label, value]) => `
+            <div class="timeline-detail-row">
+              <div class="timeline-detail-label">${escapeHtml(String(label))}</div>
+              <div class="timeline-detail-value">${escapeHtml(String(value))}</div>
+            </div>
+          `
+    ).join("")}
+    </div>
+    ${detailBlocks}
+  `;
+  }
   function destroyTimeline() {
     if (timelineInstance) {
       timelineInstance.destroy();
@@ -45945,6 +46220,7 @@ li {
       destroyTimeline();
       timelineSummary.textContent = "No absolute event timestamps in this BEP.";
       timelineChart.innerHTML = '<div class="muted">No build, action, or test events carried absolute wall-time markers.</div>';
+      renderTimelineDetail(null);
       return;
     }
     const filteredItems = filterTimelineEvents(items, options.activeTimelineFilter);
@@ -45952,6 +46228,7 @@ li {
       destroyTimeline();
       timelineSummary.textContent = "No timeline items matched the current filter.";
       timelineChart.innerHTML = '<div class="muted">No events matched the current timeline filter.</div>';
+      renderTimelineDetail(null);
       return;
     }
     const visibleItems = filteredItems.slice(0, options.rowLimit);
@@ -45963,12 +46240,14 @@ li {
       { id: "action", content: "Actions" },
       { id: "test", content: "Tests" }
     ].filter((group) => visibleItems.some((item) => item.group === group.id));
-    timelineSummary.textContent = `Showing ${visibleItems.length}/${filteredItems.length} items \xB7 Start ${new Date(rangeStart).toLocaleString()} \xB7 Span ${formatMs(Math.max(0, rangeEnd - rangeStart))}`;
+    const failedCount = visibleItems.filter((item) => item.failed).length;
+    timelineSummary.textContent = `Showing ${visibleItems.length}/${filteredItems.length} items \xB7 Start ${new Date(rangeStart).toLocaleString()} \xB7 Span ${formatMs(Math.max(0, rangeEnd - rangeStart))} \xB7 Failed ${failedCount}`;
     destroyTimeline();
     timelineChart.innerHTML = "";
     const container = document.createElement("div");
     container.className = "timeline-vis";
     timelineChart.appendChild(container);
+    const itemById = new Map(visibleItems.map((item) => [item.id, item]));
     const visItems = visibleItems.map((item) => {
       const classNames = ["timeline-vis-item", `timeline-vis-item-${item.category}`];
       if (item.failed) classNames.push("timeline-vis-item-failed");
@@ -45998,6 +46277,15 @@ li {
       maxHeight: "620px"
     });
     timelineInstance.setWindow(new Date(rangeStart), new Date(rangeEnd), { animation: false });
+    const initialItem = visibleItems.find((item) => item.failed && item.item_type !== "background") || visibleItems.find((item) => item.item_type !== "background") || visibleItems[0] || null;
+    renderTimelineDetail(initialItem);
+    if (initialItem) {
+      timelineInstance.setSelection([initialItem.id], { focus: false });
+    }
+    timelineInstance.on("select", (properties) => {
+      const [selectedId] = Array.isArray(properties?.items) ? properties.items : [];
+      renderTimelineDetail(selectedId ? itemById.get(selectedId) || null : null);
+    });
   }
   function renderSummary(summary) {
     const cards = [
@@ -46160,6 +46448,33 @@ li {
       "No worker stats."
     );
     createListItems(
+      artifactReferencesList,
+      insights.artifactReferences,
+      (item) => `
+      <li>
+        <div class="split-line">
+          <strong>${escapeHtml(item.name || item.source)}</strong>
+          <span class="badge">${escapeHtml(item.source || "artifact")}</span>
+        </div>
+        ${item.uri ? `<div class="attempt-output-item ${item.is_bytestream ? "attempt-output-item-bytestream" : ""}">
+                 <a class="attempt-output-link ${item.is_bytestream ? "attempt-output-link-bytestream" : ""}" href="${escapeHtml(item.uri)}" target="_blank" rel="noreferrer">${escapeHtml(item.uri)}</a>
+               </div>` : ""}
+        <div class="muted detail-line">
+          ${[
+        item.label ? `label=${escapeHtml(item.label)}` : null,
+        item.output_group ? `output_group=${escapeHtml(item.output_group)}` : null,
+        item.named_set_id ? `named_set=${escapeHtml(item.named_set_id)}` : null,
+        item.attempt !== void 0 && item.attempt !== null ? `attempt=${item.attempt}` : null,
+        item.digest ? `digest=${escapeHtml(item.digest)}` : null,
+        item.has_inline_contents ? "inline_contents=true" : null,
+        item.symlink_target_path ? `symlink=${escapeHtml(item.symlink_target_path)}` : null
+      ].filter(Boolean).join(" ")}
+        </div>
+      </li>
+    `,
+      "No BEP file references were reported."
+    );
+    createListItems(
       cacheOverviewList,
       insights.cacheOverview ? [insights.cacheOverview] : [],
       (item) => {
@@ -46221,7 +46536,7 @@ li {
         </div>
       </li>
     `,
-      "No IO timing breakdown found."
+      "No IO-related test timing breakdown nodes were reported."
     );
     createListItems(
       testExecWallTopList,
@@ -46397,6 +46712,7 @@ li {
   window.__lastBrowserInsights = null;
   var INVOCATION_LOOKUP_MAX_ATTEMPTS = 5;
   var INVOCATION_LOOKUP_BASE_BACKOFF_MS = 800;
+  var HISTORY_HYDRATION_LIMIT = 6;
   function currentInvocationPath() {
     const trimmed = window.location.pathname.replace(/^\/+|\/+$/g, "");
     return trimmed || null;
@@ -46409,7 +46725,9 @@ li {
     syncSetupVisibility();
   }
   function syncSetupVisibility() {
-    setupGrid.classList.toggle("hidden", Boolean(currentInvocationPath()));
+    const hasInvocationPath = Boolean(currentInvocationPath());
+    setupGrid.classList.toggle("hidden", hasInvocationPath);
+    document.body.classList.toggle("review-entry", hasInvocationPath);
   }
   function setActiveTab(tab) {
     activeTab = tab;
@@ -46443,30 +46761,42 @@ li {
     const summary = reviewSummary(review);
     return summary.success === true ? "success" : summary.success === false ? "failed" : "n/a";
   }
-  async function fetchReviewDetail(reviewId) {
+  async function fetchReviewMetadata(reviewId) {
     const response = await fetch(`/api/reviews/${reviewId}`, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`Failed to load review #${reviewId}.`);
     }
     return response.json();
   }
+  async function fetchReviewBody(reviewId) {
+    const response = await fetch(`/api/reviews/${reviewId}/body`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Failed to load review body for #${reviewId}.`);
+    }
+    return response.text();
+  }
   function queueHistoryHydration(reviews) {
+    const prioritized = [];
+    const seen = /* @__PURE__ */ new Set();
+    if (currentReviewId !== null) {
+      const activeReview = reviews.find((review) => review.id === currentReviewId);
+      if (activeReview) {
+        prioritized.push(activeReview);
+        seen.add(activeReview.id);
+      }
+    }
     for (const review of reviews) {
+      if (prioritized.length >= HISTORY_HYDRATION_LIMIT) break;
+      if (seen.has(review.id)) continue;
+      prioritized.push(review);
+      seen.add(review.id);
+    }
+    for (const review of prioritized) {
       if (!reviewNeedsHydration(review)) continue;
       if (historySummaryCache.has(review.id) || historySummaryInflight.has(review.id)) continue;
       historySummaryInflight.add(review.id);
-      fetchReviewDetail(review.id).then((detail) => {
-        const browserInsights = summarizeBrowserInsights(detail.ingest_body, detail.analysis);
-        historySummaryCache.set(review.id, browserInsights);
-        if (currentReviewId === review.id) {
-          activeFlakyLabel = resolveActiveFlakyLabel(browserInsights, activeFlakyLabel);
-          window.__lastBrowserInsights = browserInsights;
-          renderAnalysis(browserInsights.analysis, browserInsights, {
-            activeFlakyLabel,
-            activeTimelineFilter,
-            rowLimit: currentTimelineRowLimit()
-          });
-        }
+      fetchReviewMetadata(review.id).then((detail) => {
+        historySummaryCache.set(review.id, { analysis: detail.analysis });
       }).catch((error) => {
         console.error(error);
         historySummaryCache.delete(review.id);
@@ -46476,7 +46806,8 @@ li {
       });
     }
   }
-  function renderHistory(reviews) {
+  function renderHistory(reviews, options = {}) {
+    const { hydrate = true } = options;
     if (!reviews || reviews.length === 0) {
       currentHistoryReviews = [];
       historyList.innerHTML = '<li class="muted">No uploaded reviews yet.</li>';
@@ -46499,7 +46830,9 @@ li {
         </li>
       `;
     }).join("");
-    queueHistoryHydration(reviews);
+    if (hydrate) {
+      queueHistoryHydration(reviews);
+    }
   }
   function renderSetupSnippets() {
     const grpcHost = "beplessproxy.hawkingrei.com";
@@ -46530,11 +46863,14 @@ li {
   }
   async function loadReview(reviewId) {
     status.textContent = `Loading review #${reviewId}...`;
-    const review = await fetchReviewDetail(reviewId);
-    const browserInsights = summarizeBrowserInsights(review.ingest_body, review.analysis);
+    const [review, ingestBody] = await Promise.all([
+      fetchReviewMetadata(reviewId),
+      fetchReviewBody(reviewId)
+    ]);
+    const browserInsights = summarizeBrowserInsights(ingestBody, review.analysis);
     historySummaryCache.set(review.id, browserInsights);
     currentReviewId = review.id;
-    renderHistory(await fetchReviews(false));
+    renderHistory(currentHistoryReviews);
     activeFlakyLabel = resolveActiveFlakyLabel(browserInsights, activeFlakyLabel);
     window.__lastBrowserInsights = browserInsights;
     renderAnalysis(browserInsights.analysis, browserInsights, {
@@ -46545,7 +46881,8 @@ li {
     syncInvocationPath(review.invocation_id || browserInsights.analysis.summary.invocation_id || null);
     status.textContent = `Showing review #${review.id} from ${new Date(review.uploaded_at_ms).toLocaleString()}.`;
   }
-  async function fetchReviews(updateStatus = true) {
+  async function fetchReviews(updateStatus = true, options = {}) {
+    const { hydrateHistory = true } = options;
     if (updateStatus) {
       status.textContent = "Loading uploaded reviews...";
     }
@@ -46556,7 +46893,7 @@ li {
       throw new Error(message);
     }
     const reviews = await response.json();
-    renderHistory(reviews);
+    renderHistory(reviews, { hydrate: hydrateHistory });
     return reviews;
   }
   async function findInvocationReviewWithRetry(invocationId, updateStatus = true) {
@@ -46565,7 +46902,7 @@ li {
       if (updateStatus) {
         status.textContent = attempt === 1 ? `Loading invocation ${decodedInvocationId}...` : `Invocation ${decodedInvocationId} not visible yet. Retrying ${attempt}/${INVOCATION_LOOKUP_MAX_ATTEMPTS}...`;
       }
-      const reviews = await fetchReviews(false);
+      const reviews = await fetchReviews(false, { hydrateHistory: false });
       const matchedReview = reviews.find((review) => review.invocation_id === decodedInvocationId);
       if (matchedReview) {
         return { reviews, matchedReview };
@@ -46575,7 +46912,7 @@ li {
         await sleep(backoffMs);
       }
     }
-    return { reviews: await fetchReviews(false), matchedReview: null };
+    return { reviews: await fetchReviews(false, { hydrateHistory: false }), matchedReview: null };
   }
   async function boot() {
     renderSetupSnippets();

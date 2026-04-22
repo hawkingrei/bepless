@@ -1,5 +1,6 @@
 import {
   actionsList,
+  artifactReferencesList,
   cacheMissReasonsList,
   cacheOverviewList,
   compileTopList,
@@ -17,6 +18,7 @@ import {
   summaryGrid,
   testExecWallTopList,
   timelineChart,
+  timelineDetail,
   timelineSummary,
   timingBreakdownList,
   timingMetricsList,
@@ -64,6 +66,66 @@ function filterTimelineEvents(events: any[], filter: string) {
 
 let timelineInstance: Timeline | null = null;
 
+function timelineGroupLabel(group: string) {
+  if (group === "build") return "Build";
+  if (group === "action") return "Action";
+  if (group === "test") return "Test";
+  return group || "Unknown";
+}
+
+function renderTimelineDetail(item: any) {
+  if (!timelineDetail) return;
+  if (!item) {
+    timelineDetail.classList.add("muted");
+    timelineDetail.innerHTML = "Select a timeline item to inspect its details.";
+    return;
+  }
+
+  const durationMs =
+    item.end_ms !== null && item.end_ms !== undefined
+      ? Math.max(0, item.end_ms - item.start_ms)
+      : null;
+  const rows = [
+    ["Title", item.title || item.content || "n/a"],
+    ["Category", item.category || "n/a"],
+    ["Group", timelineGroupLabel(item.group)],
+    ["Kind", item.item_type || (item.end_ms !== null && item.end_ms !== undefined ? "range" : "point")],
+    ["Failed", item.failed ? "true" : "false"],
+    ["Started", new Date(item.start_ms).toLocaleString()],
+    ["Finished", item.end_ms !== null && item.end_ms !== undefined ? new Date(item.end_ms).toLocaleString() : "n/a"],
+    ["Duration", durationMs !== null ? formatMs(durationMs) : "n/a"],
+  ];
+
+  const detailBlocks = [item.detail, item.content]
+    .filter((value, index, source) => value && source.indexOf(value) === index)
+    .map(
+      (value) => `
+        <div class="timeline-detail-row">
+          <div class="timeline-detail-label">Detail</div>
+          <pre class="timeline-detail-pre">${escapeHtml(String(value))}</pre>
+        </div>
+      `,
+    )
+    .join("");
+
+  timelineDetail.classList.remove("muted");
+  timelineDetail.innerHTML = `
+    <div class="timeline-detail-grid">
+      ${rows
+        .map(
+          ([label, value]) => `
+            <div class="timeline-detail-row">
+              <div class="timeline-detail-label">${escapeHtml(String(label))}</div>
+              <div class="timeline-detail-value">${escapeHtml(String(value))}</div>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+    ${detailBlocks}
+  `;
+}
+
 function destroyTimeline() {
   if (timelineInstance) {
     timelineInstance.destroy();
@@ -80,6 +142,7 @@ export function renderTimeline(insights: any, options: TimelineRenderOptions) {
     destroyTimeline();
     timelineSummary.textContent = "No absolute event timestamps in this BEP.";
     timelineChart.innerHTML = '<div class="muted">No build, action, or test events carried absolute wall-time markers.</div>';
+    renderTimelineDetail(null);
     return;
   }
 
@@ -88,6 +151,7 @@ export function renderTimeline(insights: any, options: TimelineRenderOptions) {
     destroyTimeline();
     timelineSummary.textContent = "No timeline items matched the current filter.";
     timelineChart.innerHTML = '<div class="muted">No events matched the current timeline filter.</div>';
+    renderTimelineDetail(null);
     return;
   }
 
@@ -101,13 +165,16 @@ export function renderTimeline(insights: any, options: TimelineRenderOptions) {
     { id: "test", content: "Tests" },
   ].filter((group) => visibleItems.some((item) => item.group === group.id));
 
-  timelineSummary.textContent = `Showing ${visibleItems.length}/${filteredItems.length} items · Start ${new Date(rangeStart).toLocaleString()} · Span ${formatMs(Math.max(0, rangeEnd - rangeStart))}`;
+  const failedCount = visibleItems.filter((item) => item.failed).length;
+  timelineSummary.textContent = `Showing ${visibleItems.length}/${filteredItems.length} items · Start ${new Date(rangeStart).toLocaleString()} · Span ${formatMs(Math.max(0, rangeEnd - rangeStart))} · Failed ${failedCount}`;
 
   destroyTimeline();
   timelineChart.innerHTML = "";
   const container = document.createElement("div");
   container.className = "timeline-vis";
   timelineChart.appendChild(container);
+
+  const itemById = new Map(visibleItems.map((item) => [item.id, item]));
 
   const visItems = visibleItems.map((item) => {
     const classNames = ["timeline-vis-item", `timeline-vis-item-${item.category}`];
@@ -139,6 +206,22 @@ export function renderTimeline(insights: any, options: TimelineRenderOptions) {
     maxHeight: "620px",
   });
   timelineInstance.setWindow(new Date(rangeStart), new Date(rangeEnd), { animation: false });
+
+  const initialItem =
+    visibleItems.find((item) => item.failed && item.item_type !== "background") ||
+    visibleItems.find((item) => item.item_type !== "background") ||
+    visibleItems[0] ||
+    null;
+
+  renderTimelineDetail(initialItem);
+  if (initialItem) {
+    timelineInstance.setSelection([initialItem.id], { focus: false });
+  }
+
+  timelineInstance.on("select", (properties: any) => {
+    const [selectedId] = Array.isArray(properties?.items) ? properties.items : [];
+    renderTimelineDetail(selectedId ? itemById.get(selectedId) || null : null);
+  });
 }
 
 export function renderSummary(summary: any) {
@@ -338,6 +421,40 @@ export function renderBrowserInsights(insights: any, options: AnalysisRenderOpti
   );
 
   createListItems(
+    artifactReferencesList,
+    insights.artifactReferences,
+    (item) => `
+      <li>
+        <div class="split-line">
+          <strong>${escapeHtml(item.name || item.source)}</strong>
+          <span class="badge">${escapeHtml(item.source || "artifact")}</span>
+        </div>
+        ${
+          item.uri
+            ? `<div class="attempt-output-item ${item.is_bytestream ? "attempt-output-item-bytestream" : ""}">
+                 <a class="attempt-output-link ${item.is_bytestream ? "attempt-output-link-bytestream" : ""}" href="${escapeHtml(item.uri)}" target="_blank" rel="noreferrer">${escapeHtml(item.uri)}</a>
+               </div>`
+            : ""
+        }
+        <div class="muted detail-line">
+          ${[
+            item.label ? `label=${escapeHtml(item.label)}` : null,
+            item.output_group ? `output_group=${escapeHtml(item.output_group)}` : null,
+            item.named_set_id ? `named_set=${escapeHtml(item.named_set_id)}` : null,
+            item.attempt !== undefined && item.attempt !== null ? `attempt=${item.attempt}` : null,
+            item.digest ? `digest=${escapeHtml(item.digest)}` : null,
+            item.has_inline_contents ? "inline_contents=true" : null,
+            item.symlink_target_path ? `symlink=${escapeHtml(item.symlink_target_path)}` : null,
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        </div>
+      </li>
+    `,
+    "No BEP file references were reported.",
+  );
+
+  createListItems(
     cacheOverviewList,
     insights.cacheOverview ? [insights.cacheOverview] : [],
     (item) => {
@@ -403,7 +520,7 @@ export function renderBrowserInsights(insights: any, options: AnalysisRenderOpti
         </div>
       </li>
     `,
-    "No IO timing breakdown found.",
+    "No IO-related test timing breakdown nodes were reported.",
   );
 
   createListItems(

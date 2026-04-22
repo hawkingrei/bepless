@@ -40,6 +40,7 @@ window.__lastBrowserInsights = null;
 
 const INVOCATION_LOOKUP_MAX_ATTEMPTS = 5;
 const INVOCATION_LOOKUP_BASE_BACKOFF_MS = 800;
+const HISTORY_HYDRATION_LIMIT = 6;
 
 function currentInvocationPath() {
   const trimmed = window.location.pathname.replace(/^\/+|\/+$/g, "");
@@ -55,7 +56,9 @@ function syncInvocationPath(invocationId) {
 }
 
 function syncSetupVisibility() {
-  setupGrid.classList.toggle("hidden", Boolean(currentInvocationPath()));
+  const hasInvocationPath = Boolean(currentInvocationPath());
+  setupGrid.classList.toggle("hidden", hasInvocationPath);
+  document.body.classList.toggle("review-entry", hasInvocationPath);
 }
 
 function setActiveTab(tab) {
@@ -109,7 +112,7 @@ function reviewStatus(review) {
   return summary.success === true ? "success" : summary.success === false ? "failed" : "n/a";
 }
 
-async function fetchReviewDetail(reviewId) {
+async function fetchReviewMetadata(reviewId) {
   const response = await fetch(`/api/reviews/${reviewId}`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Failed to load review #${reviewId}.`);
@@ -118,25 +121,42 @@ async function fetchReviewDetail(reviewId) {
   return response.json();
 }
 
+async function fetchReviewBody(reviewId) {
+  const response = await fetch(`/api/reviews/${reviewId}/body`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Failed to load review body for #${reviewId}.`);
+  }
+
+  return response.text();
+}
+
 function queueHistoryHydration(reviews) {
+  const prioritized = [];
+  const seen = new Set();
+
+  if (currentReviewId !== null) {
+    const activeReview = reviews.find((review) => review.id === currentReviewId);
+    if (activeReview) {
+      prioritized.push(activeReview);
+      seen.add(activeReview.id);
+    }
+  }
+
   for (const review of reviews) {
+    if (prioritized.length >= HISTORY_HYDRATION_LIMIT) break;
+    if (seen.has(review.id)) continue;
+    prioritized.push(review);
+    seen.add(review.id);
+  }
+
+  for (const review of prioritized) {
     if (!reviewNeedsHydration(review)) continue;
     if (historySummaryCache.has(review.id) || historySummaryInflight.has(review.id)) continue;
 
     historySummaryInflight.add(review.id);
-    fetchReviewDetail(review.id)
+    fetchReviewMetadata(review.id)
       .then((detail) => {
-        const browserInsights = summarizeBrowserInsights(detail.ingest_body, detail.analysis);
-        historySummaryCache.set(review.id, browserInsights);
-        if (currentReviewId === review.id) {
-          activeFlakyLabel = resolveActiveFlakyLabel(browserInsights, activeFlakyLabel);
-          window.__lastBrowserInsights = browserInsights;
-          renderAnalysis(browserInsights.analysis, browserInsights, {
-            activeFlakyLabel,
-            activeTimelineFilter,
-            rowLimit: currentTimelineRowLimit(),
-          });
-        }
+        historySummaryCache.set(review.id, { analysis: detail.analysis });
       })
       .catch((error) => {
         console.error(error);
@@ -149,7 +169,8 @@ function queueHistoryHydration(reviews) {
   }
 }
 
-function renderHistory(reviews) {
+function renderHistory(reviews, options = {}) {
+  const { hydrate = true } = options;
   if (!reviews || reviews.length === 0) {
     currentHistoryReviews = [];
     historyList.innerHTML = '<li class="muted">No uploaded reviews yet.</li>';
@@ -176,7 +197,9 @@ function renderHistory(reviews) {
     })
     .join("");
 
-  queueHistoryHydration(reviews);
+  if (hydrate) {
+    queueHistoryHydration(reviews);
+  }
 }
 
 function renderSetupSnippets() {
@@ -211,11 +234,14 @@ async function copyBazelConfig() {
 async function loadReview(reviewId) {
   status.textContent = `Loading review #${reviewId}...`;
 
-  const review = await fetchReviewDetail(reviewId);
-  const browserInsights = summarizeBrowserInsights(review.ingest_body, review.analysis);
+  const [review, ingestBody] = await Promise.all([
+    fetchReviewMetadata(reviewId),
+    fetchReviewBody(reviewId),
+  ]);
+  const browserInsights = summarizeBrowserInsights(ingestBody, review.analysis);
   historySummaryCache.set(review.id, browserInsights);
   currentReviewId = review.id;
-  renderHistory(await fetchReviews(false));
+  renderHistory(currentHistoryReviews);
   activeFlakyLabel = resolveActiveFlakyLabel(browserInsights, activeFlakyLabel);
   window.__lastBrowserInsights = browserInsights;
   renderAnalysis(browserInsights.analysis, browserInsights, {
@@ -227,7 +253,8 @@ async function loadReview(reviewId) {
   status.textContent = `Showing review #${review.id} from ${new Date(review.uploaded_at_ms).toLocaleString()}.`;
 }
 
-async function fetchReviews(updateStatus = true) {
+async function fetchReviews(updateStatus = true, options = {}) {
+  const { hydrateHistory = true } = options;
   if (updateStatus) {
     status.textContent = "Loading uploaded reviews...";
   }
@@ -240,7 +267,7 @@ async function fetchReviews(updateStatus = true) {
   }
 
   const reviews = await response.json();
-  renderHistory(reviews);
+  renderHistory(reviews, { hydrate: hydrateHistory });
   return reviews;
 }
 
@@ -255,7 +282,7 @@ async function findInvocationReviewWithRetry(invocationId, updateStatus = true) 
           : `Invocation ${decodedInvocationId} not visible yet. Retrying ${attempt}/${INVOCATION_LOOKUP_MAX_ATTEMPTS}...`;
     }
 
-    const reviews = await fetchReviews(false);
+    const reviews = await fetchReviews(false, { hydrateHistory: false });
     const matchedReview = reviews.find((review) => review.invocation_id === decodedInvocationId);
     if (matchedReview) {
       return { reviews, matchedReview };
@@ -267,7 +294,7 @@ async function findInvocationReviewWithRetry(invocationId, updateStatus = true) 
     }
   }
 
-  return { reviews: await fetchReviews(false), matchedReview: null };
+  return { reviews: await fetchReviews(false, { hydrateHistory: false }), matchedReview: null };
 }
 
 async function boot() {

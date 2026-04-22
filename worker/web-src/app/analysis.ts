@@ -230,6 +230,7 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
   const testStrategyCounts = {};
   const timingBreakdownMs = {};
   const topActionEntries = [];
+  const artifactReferences = [];
   let abortReason = null;
   let abortDescription = null;
   let firstErrorLine = null;
@@ -269,6 +270,32 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
   let invocationWindow = null;
   const workerMetrics = [];
   let timelineItemId = 0;
+
+  function pushArtifactReference(source, file, extra = {}) {
+    if (!file || typeof file !== "object") return;
+    const uri = typeof file.uri === "string" && file.uri.trim() ? file.uri.trim() : null;
+    const name = typeof file.name === "string" && file.name.trim() ? file.name.trim() : null;
+    const pathPrefix = Array.isArray(file.pathPrefix) ? file.pathPrefix.filter(Boolean) : [];
+    const digest = typeof file.digest === "string" && file.digest ? file.digest : null;
+    const symlinkTargetPath =
+      typeof file.symlinkTargetPath === "string" && file.symlinkTargetPath
+        ? file.symlinkTargetPath
+        : null;
+    const hasInlineContents = typeof file.contentsBase64 === "string" && file.contentsBase64.length > 0;
+    if (!uri && !hasInlineContents && !symlinkTargetPath) return;
+
+    artifactReferences.push({
+      source,
+      name,
+      uri,
+      digest,
+      path_prefix: pathPrefix,
+      symlink_target_path: symlinkTargetPath,
+      has_inline_contents: hasInlineContents,
+      is_bytestream: typeof uri === "string" && uri.startsWith("bytestream://"),
+      ...extra,
+    });
+  }
 
   function pushTimelineItem(item) {
     if (item.start_ms === null || item.start_ms === undefined) return;
@@ -435,7 +462,11 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
       slowActions.push({
         label: actionId.label || "<unknown>",
         mnemonic: action.type || "unknown",
-        primary_output: action.primaryOutput || actionId.primaryOutput || "n/a",
+        primary_output:
+          action.primaryOutput?.name ||
+          action.primaryOutput?.uri ||
+          actionId.primaryOutput ||
+          "n/a",
         duration_ms: durationMs,
         success: action.success,
         exit_code: toNumber(action.exitCode),
@@ -557,6 +588,34 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
           failedTargets.push(label);
         }
       }
+      for (const file of event.completed?.importantOutput || []) {
+        pushArtifactReference("importantOutput", file, { label });
+      }
+      for (const file of event.completed?.directoryOutput || []) {
+        pushArtifactReference("directoryOutput", file, { label });
+      }
+      for (const outputGroup of event.completed?.outputGroup || []) {
+        for (const file of outputGroup.inlineFiles || []) {
+          pushArtifactReference("outputGroup.inlineFiles", file, {
+            label,
+            output_group: outputGroup.name || "unknown",
+            incomplete: outputGroup.incomplete === true,
+          });
+        }
+      }
+    }
+
+    if (event.id?.namedSet && event.namedSetOfFiles) {
+      const namedSetId = event.id.namedSet.id || "<unnamed>";
+      for (const file of event.namedSetOfFiles.files || []) {
+        pushArtifactReference("namedSetOfFiles", file, { named_set_id: namedSetId });
+      }
+    }
+
+    if (event.id?.buildToolLogs && event.buildToolLogs) {
+      for (const file of event.buildToolLogs.log || []) {
+        pushArtifactReference("buildToolLogs", file);
+      }
     }
 
     if (event.id && event.id.testSummary && event.testSummary) {
@@ -634,6 +693,15 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
       }
       foldTimingBreakdownTotals(timingBreakdown, timingBreakdownMs);
       const attempts = flakyAttemptsByLabel.get(label) || [];
+      for (const file of testResult.testActionOutput || []) {
+        pushArtifactReference("testActionOutput", file, {
+          label,
+          run: toNumber(testId.run),
+          shard: toNumber(testId.shard),
+          attempt: toNumber(testId.attempt),
+          status: testResult.status || "UNKNOWN",
+        });
+      }
       attempts.push({
         label,
         run: toNumber(testId.run),
@@ -647,6 +715,28 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
         outputs: Array.isArray(testResult.testActionOutput) ? testResult.testActionOutput : [],
       });
       flakyAttemptsByLabel.set(label, attempts);
+    }
+
+    if (event.id?.actionCompleted && event.action) {
+      const label = event.id.actionCompleted.label || "<unknown>";
+      if (event.action.primaryOutput) {
+        pushArtifactReference("action.primaryOutput", event.action.primaryOutput, {
+          label,
+          mnemonic: event.action.type || "action",
+        });
+      }
+      if (event.action.stdout) {
+        pushArtifactReference("action.stdout", event.action.stdout, {
+          label,
+          mnemonic: event.action.type || "action",
+        });
+      }
+      if (event.action.stderr) {
+        pushArtifactReference("action.stderr", event.action.stderr, {
+          label,
+          mnemonic: event.action.type || "action",
+        });
+      }
     }
   }
 
@@ -794,5 +884,11 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
     topTests: tests.slice(0, 10),
     flakyTests: flakyTests.slice(0, 10),
     flakyAttemptsByLabel,
+    artifactReferences: artifactReferences
+      .sort((left, right) => {
+        if (left.is_bytestream !== right.is_bytestream) return left.is_bytestream ? -1 : 1;
+        return String(left.source || "").localeCompare(String(right.source || ""));
+      })
+      .slice(0, 80),
   };
 }
