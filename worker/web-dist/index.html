@@ -119,6 +119,95 @@ p {
   gap: 8px;
 }
 
+.loading-strip {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(11, 110, 79, 0.18);
+  background:
+    linear-gradient(180deg, rgba(11, 110, 79, 0.1), rgba(11, 110, 79, 0.04)),
+    rgba(255, 255, 255, 0.5);
+}
+
+.loading-strip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.loading-strip-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--accent-strong);
+  font-size: 14px;
+}
+
+.loading-strip-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font: 12px/1.3 "IBM Plex Mono", monospace;
+  flex-shrink: 0;
+}
+
+.loading-steps {
+  display: grid;
+  gap: 6px;
+}
+
+.loading-step {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(27, 28, 29, 0.1);
+  transition: background 180ms ease, box-shadow 180ms ease;
+}
+
+.loading-step-complete {
+  background: linear-gradient(90deg, rgba(11, 110, 79, 0.48), rgba(11, 110, 79, 0.92));
+  box-shadow: 0 0 0 1px rgba(11, 110, 79, 0.08);
+}
+
+.loading-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid rgba(11, 110, 79, 0.18);
+  border-top-color: var(--accent);
+  animation: spin 900ms linear infinite;
+  flex-shrink: 0;
+}
+
+.loading-bar {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(27, 28, 29, 0.08);
+}
+
+.loading-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 18%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), #27a178);
+  box-shadow: 0 0 18px rgba(11, 110, 79, 0.22);
+  transition: width 220ms ease;
+}
+
+.loading-strip-indeterminate .loading-bar-fill {
+  left: -38%;
+  right: auto;
+  width: 32%;
+  animation: loading-slide 1.35s ease-in-out infinite;
+}
+
 .setup-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -826,12 +915,17 @@ li {
 
 body.review-entry .shell,
 body.review-entry .content-column {
-  gap: 12px;
+  gap: 10px;
 }
 
 body.review-entry .hero {
   padding: 8px 10px;
   border-radius: 16px;
+}
+
+body.review-entry h1 {
+  margin-bottom: 6px;
+  font-size: clamp(24px, 3.6vw, 34px);
 }
 
 body.review-entry .hero-copy {
@@ -846,7 +940,7 @@ body.review-entry .hero-top {
 }
 
 body.review-entry .section-block {
-  gap: 6px;
+  gap: 4px;
 }
 
 body.review-entry .section-heading {
@@ -857,8 +951,16 @@ body.review-entry .section-heading {
   max-width: 100%;
 }
 
+body.review-entry .section-heading > div {
+  gap: 1px;
+}
+
 body.review-entry .eyebrow {
   margin-bottom: 4px;
+}
+
+body.review-entry .hero-main {
+  gap: 6px;
 }
 
 body.review-entry .hero-actions {
@@ -868,6 +970,30 @@ body.review-entry .hero-actions {
 
 body.review-entry .hero-facts {
   gap: 6px;
+}
+
+body.review-entry .loading-strip {
+  margin-top: 8px;
+  padding: 8px 10px;
+}
+
+body.review-entry .panel {
+  padding: 10px 12px;
+  border-radius: 14px;
+}
+
+body.review-entry .selected-review-meta {
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+body.review-entry .kpi {
+  padding: 10px;
+}
+
+body.review-entry .tag-block {
+  margin-top: 10px;
+  gap: 8px;
 }
 
 body.review-entry .tab-strip {
@@ -965,11 +1091,83 @@ body.review-entry .tab-strip {
   font: 11px/1.35 "IBM Plex Mono", monospace;
 }
 
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-slide {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(430%);
+  }
+}
+
 .selected-review-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.review-skeleton {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.skeleton-row,
+.skeleton-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  background: rgba(27, 28, 29, 0.06);
+}
+
+.skeleton-row {
+  height: 14px;
+  width: min(240px, 62%);
+}
+
+.skeleton-row-short {
+  width: min(150px, 38%);
+}
+
+.skeleton-card {
+  min-height: 54px;
+}
+
+.skeleton-row::after,
+.skeleton-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.72) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  transform: translateX(-100%);
+  animation: skeleton-shimmer 1.35s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 .panel > h3 {
@@ -26845,6 +27043,14 @@ body.review-entry .tab-strip {
   var state = {
     activeTab: "summary",
     statusText: "Loading uploaded reviews...",
+    loading: {
+      active: true,
+      phase: "Loading uploaded reviews...",
+      progress: 10,
+      indeterminate: false,
+      step: 1,
+      totalSteps: 6
+    },
     historyItems: [],
     currentReviewId: null,
     analysisPayload: null,
@@ -68504,6 +68710,39 @@ body.review-entry .tab-strip {
   var INVOCATION_LOOKUP_MAX_ATTEMPTS = 5;
   var INVOCATION_LOOKUP_BASE_BACKOFF_MS = 800;
   var HISTORY_HYDRATION_LIMIT = 6;
+  var LOADING_TOTAL_STEPS = 6;
+  function setLoading(phase, progress = null, options = {}) {
+    const {
+      active = true,
+      indeterminate = progress === null,
+      step = null,
+      totalSteps = LOADING_TOTAL_STEPS
+    } = options;
+    setAppStoreState({
+      statusText: phase,
+      loading: {
+        active,
+        phase,
+        progress,
+        indeterminate,
+        step,
+        totalSteps: step === null ? null : totalSteps
+      }
+    });
+  }
+  function clearLoading(statusText) {
+    setAppStoreState({
+      statusText,
+      loading: {
+        active: false,
+        phase: statusText,
+        progress: 100,
+        indeterminate: false,
+        step: LOADING_TOTAL_STEPS,
+        totalSteps: LOADING_TOTAL_STEPS
+      }
+    });
+  }
   function currentInvocationPath() {
     const trimmed = window.location.pathname.replace(/^\/+|\/+$/g, "");
     return trimmed || null;
@@ -68654,11 +68893,14 @@ body.review-entry .tab-strip {
     }
   }
   async function loadReview(reviewId) {
-    setAppStoreState({ statusText: `Loading review #${reviewId}...` });
-    const [review, ingestBody] = await Promise.all([
-      fetchReviewMetadata(reviewId),
-      fetchReviewBody(reviewId)
-    ]);
+    setLoading(`Loading review #${reviewId} metadata...`, 42, { step: 3 });
+    const reviewPromise = fetchReviewMetadata(reviewId).then((review2) => {
+      setLoading(`Loading review #${reviewId} body...`, 58, { step: 4 });
+      return review2;
+    });
+    const bodyPromise = fetchReviewBody(reviewId);
+    const [review, ingestBody] = await Promise.all([reviewPromise, bodyPromise]);
+    setLoading(`Analyzing review #${reviewId} in browser...`, 76, { step: 5 });
     const browserInsights = summarizeBrowserInsights(ingestBody, review.analysis);
     historySummaryCache.set(review.id, browserInsights);
     currentReviewId = review.id;
@@ -68666,28 +68908,30 @@ body.review-entry .tab-strip {
     renderHistory(currentHistoryReviews);
     activeFlakyLabel = resolveActiveFlakyLabel(browserInsights, activeFlakyLabel);
     window.__lastBrowserInsights = browserInsights;
+    setLoading(`Rendering review #${review.id}...`, 92, { step: 6 });
     renderAnalysis(browserInsights.analysis, browserInsights, {
       activeFlakyLabel,
       activeTimelineFilter,
       rowLimit: currentTimelineRowLimit()
     });
     syncInvocationPath(review.invocation_id || browserInsights.analysis.summary.invocation_id || null);
-    setAppStoreState({
-      statusText: `Showing review #${review.id} from ${new Date(review.uploaded_at_ms).toLocaleString()}.`
-    });
+    clearLoading(`Showing review #${review.id} from ${new Date(review.uploaded_at_ms).toLocaleString()}.`);
   }
   async function fetchReviews(updateStatus = true, options = {}) {
     const { hydrateHistory = true } = options;
     if (updateStatus) {
-      setAppStoreState({ statusText: "Loading uploaded reviews..." });
+      setLoading("Loading uploaded reviews...", 12, { step: 1 });
     }
     const response = await fetch("/api/reviews", { cache: "no-store" });
     if (!response.ok) {
       const message = "Failed to load uploaded reviews.";
-      setAppStoreState({ statusText: message });
+      setLoading(message, null, { active: false, indeterminate: false });
       throw new Error(message);
     }
     const reviews = await response.json();
+    if (updateStatus) {
+      setLoading(`Loaded ${reviews.length} uploaded reviews.`, 26, { step: 2 });
+    }
     renderHistory(reviews, { hydrate: hydrateHistory });
     return reviews;
   }
@@ -68695,9 +68939,11 @@ body.review-entry .tab-strip {
     const decodedInvocationId = decodeURIComponent(invocationId);
     for (let attempt = 1; attempt <= INVOCATION_LOOKUP_MAX_ATTEMPTS; attempt += 1) {
       if (updateStatus) {
-        setAppStoreState({
-          statusText: attempt === 1 ? `Loading invocation ${decodedInvocationId}...` : `Invocation ${decodedInvocationId} not visible yet. Retrying ${attempt}/${INVOCATION_LOOKUP_MAX_ATTEMPTS}...`
-        });
+        setLoading(
+          attempt === 1 ? `Loading invocation ${decodedInvocationId}...` : `Invocation ${decodedInvocationId} not visible yet. Retrying ${attempt}/${INVOCATION_LOOKUP_MAX_ATTEMPTS}...`,
+          Math.min(58, 18 + attempt * 8),
+          { step: 2 }
+        );
       }
       const reviews = await fetchReviews(false, { hydrateHistory: false });
       const matchedReview = reviews.find((review) => review.invocation_id === decodedInvocationId);
@@ -68719,7 +68965,7 @@ body.review-entry .tab-strip {
     try {
       const reviews = await fetchReviews();
       if (reviews.length === 0) {
-        setAppStoreState({ statusText: "Waiting for BES uploads." });
+        clearLoading("Waiting for BES uploads.");
         return;
       }
       const invocationId = currentInvocationPath();
@@ -68738,9 +68984,9 @@ body.review-entry .tab-strip {
         renderHistory(retriedReviews);
         activeFlakyLabel = null;
         resetReviewPanels(`Invocation ${decodeURIComponent(invocationId)} was not found in the latest 50 reviews.`);
-        setAppStoreState({
-          statusText: `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`
-        });
+        clearLoading(
+          `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`
+        );
         return;
       }
       currentReviewId = reviews[0].id;
@@ -68751,6 +68997,7 @@ body.review-entry .tab-strip {
       console.error(error);
       activeFlakyLabel = null;
       resetReviewPanels("Failed to load reviews.");
+      setLoading("Failed to load reviews.", null, { active: false, indeterminate: false });
     }
   }
   async function refreshReviews() {
@@ -68769,9 +69016,9 @@ body.review-entry .tab-strip {
           renderHistory(reviews2);
           activeFlakyLabel = null;
           resetReviewPanels(`Invocation ${decodeURIComponent(invocationId)} was not found in the latest 50 reviews.`);
-          setAppStoreState({
-            statusText: `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`
-          });
+          clearLoading(
+            `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`
+          );
         }
         return;
       }
@@ -68781,7 +69028,7 @@ body.review-entry .tab-strip {
         setAppStoreState({ currentReviewId: null });
         activeFlakyLabel = null;
         resetReviewPanels();
-        setAppStoreState({ statusText: "Waiting for BES uploads." });
+        clearLoading("Waiting for BES uploads.");
         return;
       }
       const target = reviews.some((review) => review.id === currentReviewId) ? currentReviewId : reviews[0].id;
@@ -68791,6 +69038,7 @@ body.review-entry .tab-strip {
       await loadReview(target);
     } catch (error) {
       console.error(error);
+      setLoading("Refresh failed.", null, { active: false, indeterminate: false });
     }
   }
   async function openReviewById(reviewId) {
@@ -68851,8 +69099,11 @@ body.review-entry .tab-strip {
   // web-src/components/HeroSection.tsx
   var import_jsx_runtime3 = __toESM(require_jsx_runtime());
   function HeroSection() {
-    const { statusText, historyItems, currentReviewId: currentReviewId2 } = useAppStore();
+    const { statusText, loading, historyItems, currentReviewId: currentReviewId2 } = useAppStore();
     const selectedLabel = historyItems.find((item) => item.id === currentReviewId2)?.label ?? null;
+    const progressText = loading.progress !== null ? `${Math.max(0, Math.min(100, Math.round(loading.progress)))}%` : "syncing";
+    const stepText = loading.step !== null && loading.totalSteps !== null ? `step ${Math.max(1, loading.step)}/${loading.totalSteps}` : null;
+    const loadingSteps = loading.totalSteps !== null ? Array.from({ length: loading.totalSteps }, (_, index) => index + 1) : [];
     return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { className: "hero", children: [
       /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "hero-top", children: [
         /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "hero-main", children: [
@@ -68887,6 +69138,42 @@ body.review-entry .tab-strip {
           /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { className: "status", id: "status", children: statusText })
         ] })
       ] }),
+      loading.active ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: `loading-strip${loading.indeterminate ? " loading-strip-indeterminate" : ""}`, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "loading-strip-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "loading-strip-title", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { className: "loading-spinner", "aria-hidden": "true" }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("strong", { children: loading.phase || statusText })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "loading-strip-meta", children: [
+            stepText ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { children: stepText }) : null,
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { children: progressText })
+          ] })
+        ] }),
+        loadingSteps.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          "div",
+          {
+            className: "loading-steps",
+            "aria-hidden": "true",
+            style: { gridTemplateColumns: `repeat(${loadingSteps.length}, minmax(0, 1fr))` },
+            children: loadingSteps.map((step) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              "span",
+              {
+                className: `loading-step${loading.step !== null && step <= loading.step ? " loading-step-complete" : ""}`
+              },
+              step
+            ))
+          }
+        ) : null,
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { className: "loading-bar", children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          "div",
+          {
+            className: "loading-bar-fill",
+            style: {
+              width: loading.progress !== null ? `${Math.max(6, Math.min(100, loading.progress))}%` : "38%"
+            }
+          }
+        ) })
+      ] }) : null,
       /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "setup-grid", id: "setup-grid", children: [
         /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { className: "panel setup-card", children: [
           /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "split-line", children: [
@@ -69028,11 +69315,20 @@ body.review-entry .tab-strip {
   // web-src/components/SelectedReviewSection.tsx
   var import_jsx_runtime6 = __toESM(require_jsx_runtime());
   function SelectedReviewSection() {
-    const { historyItems, currentReviewId: currentReviewId2 } = useAppStore();
+    const { historyItems, currentReviewId: currentReviewId2, loading } = useAppStore();
     const selectedItem = historyItems.find((item) => item.id === currentReviewId2) ?? null;
     return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("section", { className: "section-block", children: [
       /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(SectionHeading, { eyebrow: "Selected Review", title: "Summary" }),
       /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("section", { className: "panel", children: [
+        loading.active ? /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "review-skeleton", "aria-hidden": "true", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "skeleton-row skeleton-row-short" }),
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "skeleton-grid", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "skeleton-card" }),
+            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "skeleton-card" }),
+            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "skeleton-card" }),
+            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "skeleton-card" })
+          ] })
+        ] }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "selected-review-meta", children: [
           /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "pill mono", children: selectedItem ? `review ${selectedItem.id}` : "review pending" }),
           /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "pill", children: selectedItem?.status ?? "loading" }),
@@ -69073,7 +69369,7 @@ body.review-entry .tab-strip {
         /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "sidebar-stats", children: [
           /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "pill", children: [
             hydratedCount,
-            " hydrated"
+            " details loaded"
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "pill", children: [
             Math.max(historyItems.length - hydratedCount, 0),

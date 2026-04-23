@@ -2,13 +2,24 @@ import { useAppStore } from "../app/store";
 import { SectionHeading } from "./SectionHeading";
 
 export function SelectedReviewSection() {
-  const { historyItems, currentReviewId } = useAppStore();
+  const { historyItems, currentReviewId, loading } = useAppStore();
   const selectedItem = historyItems.find((item) => item.id === currentReviewId) ?? null;
 
   return (
     <section className="section-block">
       <SectionHeading eyebrow="Selected Review" title="Summary" />
       <section className="panel">
+        {loading.active ? (
+          <div className="review-skeleton" aria-hidden="true">
+            <div className="skeleton-row skeleton-row-short"></div>
+            <div className="skeleton-grid">
+              <div className="skeleton-card"></div>
+              <div className="skeleton-card"></div>
+              <div className="skeleton-card"></div>
+              <div className="skeleton-card"></div>
+            </div>
+          </div>
+        ) : null}
         <div className="selected-review-meta">
           <span className="pill mono">
             {selectedItem ? `review ${selectedItem.id}` : "review pending"}

@@ -10,9 +10,19 @@ export type HistoryItem = {
   active: boolean;
 };
 
+export type LoadingState = {
+  active: boolean;
+  phase: string;
+  progress: number | null;
+  indeterminate: boolean;
+  step: number | null;
+  totalSteps: number | null;
+};
+
 type AppStoreState = {
   activeTab: string;
   statusText: string;
+  loading: LoadingState;
   historyItems: HistoryItem[];
   currentReviewId: number | null;
   analysisPayload: any | null;
@@ -26,6 +36,14 @@ type AppStoreState = {
 let state: AppStoreState = {
   activeTab: "summary",
   statusText: "Loading uploaded reviews...",
+  loading: {
+    active: true,
+    phase: "Loading uploaded reviews...",
+    progress: 10,
+    indeterminate: false,
+    step: 1,
+    totalSteps: 6,
+  },
   historyItems: [],
   currentReviewId: null,
   analysisPayload: null,

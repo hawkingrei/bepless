@@ -16,7 +16,7 @@ export function SidebarReviews() {
           Recent invocations persisted in D1. Select one review to hydrate the detailed dashboard.
         </p>
         <div className="sidebar-stats">
-          <span className="pill">{hydratedCount} hydrated</span>
+          <span className="pill">{hydratedCount} details loaded</span>
           <span className="pill">{Math.max(historyItems.length - hydratedCount, 0)} pending</span>
           <span className="pill">latest 50</span>
         </div>

@@ -2,9 +2,17 @@ import { useAppStore } from "../app/store";
 import { refreshReviews } from "../controller";
 
 export function HeroSection() {
-  const { statusText, historyItems, currentReviewId } = useAppStore();
+  const { statusText, loading, historyItems, currentReviewId } = useAppStore();
   const selectedLabel =
     historyItems.find((item) => item.id === currentReviewId)?.label ?? null;
+  const progressText =
+    loading.progress !== null ? `${Math.max(0, Math.min(100, Math.round(loading.progress)))}%` : "syncing";
+  const stepText =
+    loading.step !== null && loading.totalSteps !== null
+      ? `step ${Math.max(1, loading.step)}/${loading.totalSteps}`
+      : null;
+  const loadingSteps =
+    loading.totalSteps !== null ? Array.from({ length: loading.totalSteps }, (_, index) => index + 1) : [];
 
   return (
     <section className="hero">
@@ -37,6 +45,43 @@ export function HeroSection() {
           <div className="status" id="status">{statusText}</div>
         </div>
       </div>
+
+      {loading.active ? (
+        <div className={`loading-strip${loading.indeterminate ? " loading-strip-indeterminate" : ""}`}>
+          <div className="loading-strip-head">
+            <div className="loading-strip-title">
+              <span className="loading-spinner" aria-hidden="true"></span>
+              <strong>{loading.phase || statusText}</strong>
+            </div>
+            <div className="loading-strip-meta">
+              {stepText ? <span>{stepText}</span> : null}
+              <span>{progressText}</span>
+            </div>
+          </div>
+          {loadingSteps.length > 0 ? (
+            <div
+              className="loading-steps"
+              aria-hidden="true"
+              style={{ gridTemplateColumns: `repeat(${loadingSteps.length}, minmax(0, 1fr))` }}
+            >
+              {loadingSteps.map((step) => (
+                <span
+                  key={step}
+                  className={`loading-step${loading.step !== null && step <= loading.step ? " loading-step-complete" : ""}`}
+                ></span>
+              ))}
+            </div>
+          ) : null}
+          <div className="loading-bar">
+            <div
+              className="loading-bar-fill"
+              style={{
+                width: loading.progress !== null ? `${Math.max(6, Math.min(100, loading.progress))}%` : "38%",
+              }}
+            ></div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="setup-grid" id="setup-grid">
         <section className="panel setup-card">

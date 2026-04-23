@@ -38,6 +38,41 @@ window.__lastBrowserInsights = null;
 const INVOCATION_LOOKUP_MAX_ATTEMPTS = 5;
 const INVOCATION_LOOKUP_BASE_BACKOFF_MS = 800;
 const HISTORY_HYDRATION_LIMIT = 6;
+const LOADING_TOTAL_STEPS = 6;
+
+function setLoading(phase, progress = null, options = {}) {
+  const {
+    active = true,
+    indeterminate = progress === null,
+    step = null,
+    totalSteps = LOADING_TOTAL_STEPS,
+  } = options;
+  setAppStoreState({
+    statusText: phase,
+    loading: {
+      active,
+      phase,
+      progress,
+      indeterminate,
+      step,
+      totalSteps: step === null ? null : totalSteps,
+    },
+  });
+}
+
+function clearLoading(statusText) {
+  setAppStoreState({
+    statusText,
+    loading: {
+      active: false,
+      phase: statusText,
+      progress: 100,
+      indeterminate: false,
+      step: LOADING_TOTAL_STEPS,
+      totalSteps: LOADING_TOTAL_STEPS,
+    },
+  });
+}
 
 function currentInvocationPath() {
   const trimmed = window.location.pathname.replace(/^\/+|\/+$/g, "");
@@ -228,12 +263,15 @@ async function copyBazelConfig() {
 }
 
 async function loadReview(reviewId) {
-  setAppStoreState({ statusText: `Loading review #${reviewId}...` });
+  setLoading(`Loading review #${reviewId} metadata...`, 42, { step: 3 });
 
-  const [review, ingestBody] = await Promise.all([
-    fetchReviewMetadata(reviewId),
-    fetchReviewBody(reviewId),
-  ]);
+  const reviewPromise = fetchReviewMetadata(reviewId).then((review) => {
+    setLoading(`Loading review #${reviewId} body...`, 58, { step: 4 });
+    return review;
+  });
+  const bodyPromise = fetchReviewBody(reviewId);
+  const [review, ingestBody] = await Promise.all([reviewPromise, bodyPromise]);
+  setLoading(`Analyzing review #${reviewId} in browser...`, 76, { step: 5 });
   const browserInsights = summarizeBrowserInsights(ingestBody, review.analysis);
   historySummaryCache.set(review.id, browserInsights);
   currentReviewId = review.id;
@@ -241,31 +279,33 @@ async function loadReview(reviewId) {
   renderHistory(currentHistoryReviews);
   activeFlakyLabel = resolveActiveFlakyLabel(browserInsights, activeFlakyLabel);
   window.__lastBrowserInsights = browserInsights;
+  setLoading(`Rendering review #${review.id}...`, 92, { step: 6 });
   renderAnalysis(browserInsights.analysis, browserInsights, {
     activeFlakyLabel,
     activeTimelineFilter,
     rowLimit: currentTimelineRowLimit(),
   });
   syncInvocationPath(review.invocation_id || browserInsights.analysis.summary.invocation_id || null);
-  setAppStoreState({
-    statusText: `Showing review #${review.id} from ${new Date(review.uploaded_at_ms).toLocaleString()}.`,
-  });
+  clearLoading(`Showing review #${review.id} from ${new Date(review.uploaded_at_ms).toLocaleString()}.`);
 }
 
 async function fetchReviews(updateStatus = true, options = {}) {
   const { hydrateHistory = true } = options;
   if (updateStatus) {
-    setAppStoreState({ statusText: "Loading uploaded reviews..." });
+    setLoading("Loading uploaded reviews...", 12, { step: 1 });
   }
 
   const response = await fetch("/api/reviews", { cache: "no-store" });
   if (!response.ok) {
     const message = "Failed to load uploaded reviews.";
-    setAppStoreState({ statusText: message });
+    setLoading(message, null, { active: false, indeterminate: false });
     throw new Error(message);
   }
 
   const reviews = await response.json();
+  if (updateStatus) {
+    setLoading(`Loaded ${reviews.length} uploaded reviews.`, 26, { step: 2 });
+  }
   renderHistory(reviews, { hydrate: hydrateHistory });
   return reviews;
 }
@@ -275,12 +315,13 @@ async function findInvocationReviewWithRetry(invocationId, updateStatus = true) 
 
   for (let attempt = 1; attempt <= INVOCATION_LOOKUP_MAX_ATTEMPTS; attempt += 1) {
     if (updateStatus) {
-      setAppStoreState({
-        statusText:
-          attempt === 1
-            ? `Loading invocation ${decodedInvocationId}...`
-            : `Invocation ${decodedInvocationId} not visible yet. Retrying ${attempt}/${INVOCATION_LOOKUP_MAX_ATTEMPTS}...`,
-      });
+      setLoading(
+        attempt === 1
+          ? `Loading invocation ${decodedInvocationId}...`
+          : `Invocation ${decodedInvocationId} not visible yet. Retrying ${attempt}/${INVOCATION_LOOKUP_MAX_ATTEMPTS}...`,
+        Math.min(58, 18 + attempt * 8),
+        { step: 2 },
+      );
     }
 
     const reviews = await fetchReviews(false, { hydrateHistory: false });
@@ -307,7 +348,7 @@ async function boot() {
   try {
     const reviews = await fetchReviews();
     if (reviews.length === 0) {
-      setAppStoreState({ statusText: "Waiting for BES uploads." });
+      clearLoading("Waiting for BES uploads.");
       return;
     }
 
@@ -328,9 +369,9 @@ async function boot() {
       renderHistory(retriedReviews);
       activeFlakyLabel = null;
       resetReviewPanels(`Invocation ${decodeURIComponent(invocationId)} was not found in the latest 50 reviews.`);
-      setAppStoreState({
-        statusText: `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`,
-      });
+      clearLoading(
+        `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`,
+      );
       return;
     }
 
@@ -342,6 +383,7 @@ async function boot() {
     console.error(error);
     activeFlakyLabel = null;
     resetReviewPanels("Failed to load reviews.");
+    setLoading("Failed to load reviews.", null, { active: false, indeterminate: false });
   }
 }
 
@@ -361,9 +403,9 @@ export async function refreshReviews() {
         renderHistory(reviews);
         activeFlakyLabel = null;
         resetReviewPanels(`Invocation ${decodeURIComponent(invocationId)} was not found in the latest 50 reviews.`);
-        setAppStoreState({
-          statusText: `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`,
-        });
+        clearLoading(
+          `Invocation ${decodeURIComponent(invocationId)} was not found after ${INVOCATION_LOOKUP_MAX_ATTEMPTS} attempts.`,
+        );
       }
       return;
     }
@@ -374,7 +416,7 @@ export async function refreshReviews() {
       setAppStoreState({ currentReviewId: null });
       activeFlakyLabel = null;
       resetReviewPanels();
-      setAppStoreState({ statusText: "Waiting for BES uploads." });
+      clearLoading("Waiting for BES uploads.");
       return;
     }
 
@@ -385,6 +427,7 @@ export async function refreshReviews() {
     await loadReview(target);
   } catch (error) {
     console.error(error);
+    setLoading("Refresh failed.", null, { active: false, indeterminate: false });
   }
 }
 
