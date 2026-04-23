@@ -108,7 +108,7 @@ function foldTimingBreakdownTotals(node, totals) {
   }
 }
 
-function buildFindings(summary, slowestTests, topActionMnemonics, timingBreakdownMs) {
+function buildFindings(summary, slowestTestExecutionWallItems, topActionMnemonics, timingBreakdownMs) {
   const findings = [];
 
   if (summary.execution_phase_ms !== null && summary.wall_time_ms !== null && summary.wall_time_ms > 0) {
@@ -131,29 +131,17 @@ function buildFindings(summary, slowestTests, topActionMnemonics, timingBreakdow
     }
   }
 
-  if (summary.cache_hit_ratio !== null && summary.cache_hit_ratio !== undefined) {
-    if (summary.cache_hit_ratio < 0.6) {
-      findings.push({
-        severity: "high",
-        category: "cache",
-        message: `Action cache hit ratio is low at ${(summary.cache_hit_ratio * 100).toFixed(1)}%. Expect unnecessary rebuild work.`,
-      });
-    } else if (summary.cache_hit_ratio < 0.85) {
-      findings.push({
-        severity: "medium",
-        category: "cache",
-        message: `Action cache hit ratio is only ${(summary.cache_hit_ratio * 100).toFixed(1)}%. There is room to reduce repeated execution.`,
-      });
-    }
-  }
-
-  if (summary.critical_path_ms !== null && slowestTests.length > 0 && summary.critical_path_ms > 0) {
-    const slowestTest = slowestTests[0];
+  if (
+    summary.critical_path_ms !== null &&
+    slowestTestExecutionWallItems.length > 0 &&
+    summary.critical_path_ms > 0
+  ) {
+    const slowestTest = slowestTestExecutionWallItems[0];
     if ((slowestTest.duration_ms * 100) / summary.critical_path_ms >= 50) {
       findings.push({
         severity: "medium",
         category: "tests",
-        message: `A single test is consuming a large portion of the critical path: ${slowestTest.label} took ${slowestTest.duration_ms} ms, critical path is ${summary.critical_path_ms} ms.`,
+        message: `A single test attempt is consuming a large portion of the critical path: ${slowestTest.name} reached ${slowestTest.duration_ms} ms execution wall time, critical path is ${summary.critical_path_ms} ms.`,
       });
     }
   }
@@ -217,10 +205,11 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
   const compileItems = [];
   const ioItems = [];
   const testExecutionWallItems = [];
+  const testExecutionWallByLabel = new Map();
   const slowActions = [];
   const timelineActions = [];
   const timelineItems = [];
-  const tests = [];
+  const testSummaries = [];
   const flakyTests = [];
   const flakyAttemptsByLabel = new Map();
   const cacheMissReasons = new Map();
@@ -261,7 +250,7 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
     remote_cache_hits: storedSummary.remote_cache_hits ?? null,
     action_cache_hits: storedSummary.action_cache_hits ?? null,
     action_cache_misses: storedSummary.action_cache_misses ?? null,
-    cache_hit_ratio: storedSummary.cache_hit_ratio ?? null,
+    cache_hit_ratio: null,
   };
   let cacheOverview = null;
   let jvmMetrics = null;
@@ -637,7 +626,7 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
         total_run_count: toNumber(testSummary.totalRunCount),
       };
 
-      tests.push(test);
+      testSummaries.push(test);
       summary.test_summaries += 1;
       if (test.status !== "PASSED" && test.status !== "FLAKY") {
         summary.failed_tests += 1;
@@ -674,6 +663,18 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
         strategy: testResult.executionInfo?.strategy || "n/a",
         status: testResult.status || "UNKNOWN",
       });
+      const currentSlowestAttempt = testExecutionWallByLabel.get(label);
+      if (!currentSlowestAttempt || (executionWallMs ?? -1) > (currentSlowestAttempt.duration_ms ?? -1)) {
+        testExecutionWallByLabel.set(label, {
+          name: label,
+          duration_ms: executionWallMs,
+          strategy: testResult.executionInfo?.strategy || "n/a",
+          status: testResult.status || "UNKNOWN",
+          attempt: toNumber(testId.attempt),
+          run: toNumber(testId.run),
+          shard: toNumber(testId.shard),
+        });
+      }
       pushTimelineItem({
         group: "test",
         category: "test",
@@ -744,8 +745,11 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
   ioItems.sort((left, right) => right.duration_ms - left.duration_ms);
   testExecutionWallItems.sort((left, right) => (right.duration_ms ?? -1) - (left.duration_ms ?? -1));
   slowActions.sort((left, right) => (right.duration_ms ?? -1) - (left.duration_ms ?? -1));
-  tests.sort((left, right) => right.duration_ms - left.duration_ms);
+  testSummaries.sort((left, right) => right.duration_ms - left.duration_ms);
   flakyTests.sort((left, right) => right.duration_ms - left.duration_ms);
+  const topTestExecutionWallByLabel = Array.from(testExecutionWallByLabel.values())
+    .filter((item) => item.duration_ms !== null)
+    .sort((left, right) => (right.duration_ms ?? -1) - (left.duration_ms ?? -1));
   const topActionMnemonics = topActionEntries
     .sort((left, right) => right.span_ms - left.span_ms)
     .slice(0, 8);
@@ -753,24 +757,17 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
   if (summary.started_at_ms !== null && summary.finished_at_ms !== null && summary.finished_at_ms >= summary.started_at_ms) {
     summary.elapsed_ms = summary.finished_at_ms - summary.started_at_ms;
   }
-  if (summary.action_cache_hits !== null && summary.action_cache_misses !== null) {
-    const totalCacheEvents = summary.action_cache_hits + summary.action_cache_misses;
-    if (totalCacheEvents > 0) {
-      summary.cache_hit_ratio = summary.action_cache_hits / totalCacheEvents;
-    }
-  }
-  if (cacheOverview) {
-    const totalCacheEvents = (cacheOverview.action_hits || 0) + (cacheOverview.action_misses || 0);
-    if (totalCacheEvents > 0) {
-      summary.cache_hit_ratio = (cacheOverview.action_hits || 0) / totalCacheEvents;
-    }
-  }
   summary.failed_targets = failedTargets.length;
   if (summary.success === null && abortReason) {
     summary.success = false;
   }
 
-  const findings = buildFindings(summary, tests.slice(0, 10), topActionMnemonics, timingBreakdownMs);
+  const findings = buildFindings(
+    summary,
+    topTestExecutionWallByLabel.slice(0, 10),
+    topActionMnemonics,
+    timingBreakdownMs,
+  );
   if (abortReason) {
     findings.unshift({
       severity: "high",
@@ -854,7 +851,8 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
   return {
     analysis: {
       summary,
-      slowest_tests: tests.slice(0, 10),
+      slowest_tests: testSummaries.slice(0, 10),
+      slowest_test_attempts: topTestExecutionWallByLabel.slice(0, 10),
       failed_targets: failedTargets,
       top_action_mnemonics: topActionMnemonics,
       runner_counts: runnerCounts,
@@ -879,9 +877,9 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
     cacheMissReasons: Array.from(cacheMissReasons.entries()).sort((left, right) => right[1] - left[1]),
     topCompileItems: compileItems.slice(0, 10),
     topIoItems: ioItems.filter((item) => item.duration_ms > 0).slice(0, 10),
-    topTestExecutionWallItems: testExecutionWallItems.filter((item) => item.duration_ms !== null).slice(0, 10),
+    topTestExecutionWallItems: topTestExecutionWallByLabel.slice(0, 10),
     slowActions: slowActions.filter((item) => item.duration_ms !== null).slice(0, 10),
-    topTests: tests.slice(0, 10),
+    topTestSummaries: testSummaries.slice(0, 10),
     flakyTests: flakyTests.slice(0, 10),
     flakyAttemptsByLabel,
     artifactReferences: artifactReferences

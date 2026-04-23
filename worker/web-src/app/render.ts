@@ -230,7 +230,7 @@ export function renderSummary(summary: any) {
     ["Command", summary.command || "n/a", summary.command_source || null],
     ["Wall Time", formatMs(summary.wall_time_ms ?? summary.elapsed_ms), null],
     ["Critical Path", formatMs(summary.critical_path_ms), null],
-    ["Cache Hit Ratio", formatPercent(summary.cache_hit_ratio), null],
+    ["Action Cache Ratio", formatPercent(summary.cache_hit_ratio), null],
     ["Actions", summary.total_actions ?? "n/a", null],
     ["Failed Tests", summary.failed_tests, null],
     ["Exit Code", summary.exit_code || "n/a", null],
@@ -458,18 +458,14 @@ export function renderBrowserInsights(insights: any, options: AnalysisRenderOpti
     cacheOverviewList,
     insights.cacheOverview ? [insights.cacheOverview] : [],
     (item) => {
-      const hits = item.action_hits;
-      const misses = item.action_misses;
-      const ratio = hits !== null && misses !== null && hits + misses > 0 ? hits / (hits + misses) : null;
-
       return `
         <li>
           <div class="split-line">
-            <strong>Action Cache</strong>
-            <span class="badge">${formatPercent(ratio)}</span>
+            <strong>Action Cache Statistics</strong>
+            <span class="badge">stats</span>
           </div>
           <div class="muted detail-line">
-            hits=${hits ?? "n/a"} misses=${misses ?? "n/a"} remote_hits=${item.remote_hits ?? "n/a"}
+            hits=${item.action_hits ?? "n/a"} misses=${item.action_misses ?? "n/a"} remote_hits=${item.remote_hits ?? "n/a"}
           </div>
         </li>
       `;
@@ -533,7 +529,7 @@ export function renderBrowserInsights(insights: any, options: AnalysisRenderOpti
           <span class="badge">${formatMs(item.duration_ms)}</span>
         </div>
         <div class="muted detail-line">
-          strategy=${item.strategy} status=${item.status}
+          strategy=${item.strategy} status=${item.status} run=${item.run ?? "n/a"} shard=${item.shard ?? "n/a"} attempt=${item.attempt ?? "n/a"}
         </div>
       </li>
     `,
@@ -583,7 +579,7 @@ export function renderBrowserInsights(insights: any, options: AnalysisRenderOpti
 
   createListItems(
     slowTestsList,
-    insights.topTests,
+    insights.topTestSummaries,
     (item) => `
       <li>
         <div class="split-line">
@@ -591,7 +587,7 @@ export function renderBrowserInsights(insights: any, options: AnalysisRenderOpti
           <span class="badge">${formatMs(item.duration_ms)}</span>
         </div>
         <div class="muted detail-line">
-          status=${item.status} cached=${item.cached === null ? "n/a" : String(item.cached)} attempts=${item.attempt_count ?? "n/a"}
+          status=${item.status} cached=${item.cached === null ? "n/a" : String(item.cached)} attempts=${item.attempt_count ?? "n/a"} runs=${item.total_run_count ?? item.run_count ?? "n/a"} summary_duration=true
         </div>
       </li>
     `,

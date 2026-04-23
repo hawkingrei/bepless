@@ -27340,7 +27340,7 @@ body.review-entry .tab-strip {
       foldTimingBreakdownTotals(child, totals);
     }
   }
-  function buildFindings(summary, slowestTests, topActionMnemonics, timingBreakdownMs) {
+  function buildFindings(summary, slowestTestExecutionWallItems, topActionMnemonics, timingBreakdownMs) {
     const findings = [];
     if (summary.execution_phase_ms !== null && summary.wall_time_ms !== null && summary.wall_time_ms > 0) {
       if (summary.execution_phase_ms * 100 / summary.wall_time_ms >= 70) {
@@ -27360,28 +27360,13 @@ body.review-entry .tab-strip {
         });
       }
     }
-    if (summary.cache_hit_ratio !== null && summary.cache_hit_ratio !== void 0) {
-      if (summary.cache_hit_ratio < 0.6) {
-        findings.push({
-          severity: "high",
-          category: "cache",
-          message: `Action cache hit ratio is low at ${(summary.cache_hit_ratio * 100).toFixed(1)}%. Expect unnecessary rebuild work.`
-        });
-      } else if (summary.cache_hit_ratio < 0.85) {
-        findings.push({
-          severity: "medium",
-          category: "cache",
-          message: `Action cache hit ratio is only ${(summary.cache_hit_ratio * 100).toFixed(1)}%. There is room to reduce repeated execution.`
-        });
-      }
-    }
-    if (summary.critical_path_ms !== null && slowestTests.length > 0 && summary.critical_path_ms > 0) {
-      const slowestTest = slowestTests[0];
+    if (summary.critical_path_ms !== null && slowestTestExecutionWallItems.length > 0 && summary.critical_path_ms > 0) {
+      const slowestTest = slowestTestExecutionWallItems[0];
       if (slowestTest.duration_ms * 100 / summary.critical_path_ms >= 50) {
         findings.push({
           severity: "medium",
           category: "tests",
-          message: `A single test is consuming a large portion of the critical path: ${slowestTest.label} took ${slowestTest.duration_ms} ms, critical path is ${summary.critical_path_ms} ms.`
+          message: `A single test attempt is consuming a large portion of the critical path: ${slowestTest.name} reached ${slowestTest.duration_ms} ms execution wall time, critical path is ${summary.critical_path_ms} ms.`
         });
       }
     }
@@ -27420,10 +27405,11 @@ body.review-entry .tab-strip {
     const compileItems = [];
     const ioItems = [];
     const testExecutionWallItems = [];
+    const testExecutionWallByLabel = /* @__PURE__ */ new Map();
     const slowActions = [];
     const timelineActions = [];
     const timelineItems = [];
-    const tests = [];
+    const testSummaries = [];
     const flakyTests = [];
     const flakyAttemptsByLabel = /* @__PURE__ */ new Map();
     const cacheMissReasons = /* @__PURE__ */ new Map();
@@ -27464,7 +27450,7 @@ body.review-entry .tab-strip {
       remote_cache_hits: storedSummary.remote_cache_hits ?? null,
       action_cache_hits: storedSummary.action_cache_hits ?? null,
       action_cache_misses: storedSummary.action_cache_misses ?? null,
-      cache_hit_ratio: storedSummary.cache_hit_ratio ?? null
+      cache_hit_ratio: null
     };
     let cacheOverview = null;
     let jvmMetrics = null;
@@ -27793,7 +27779,7 @@ body.review-entry .tab-strip {
           run_count: toNumber(testSummary.runCount),
           total_run_count: toNumber(testSummary.totalRunCount)
         };
-        tests.push(test);
+        testSummaries.push(test);
         summary.test_summaries += 1;
         if (test.status !== "PASSED" && test.status !== "FLAKY") {
           summary.failed_tests += 1;
@@ -27823,6 +27809,18 @@ body.review-entry .tab-strip {
           strategy: testResult.executionInfo?.strategy || "n/a",
           status: testResult.status || "UNKNOWN"
         });
+        const currentSlowestAttempt = testExecutionWallByLabel.get(label);
+        if (!currentSlowestAttempt || (executionWallMs ?? -1) > (currentSlowestAttempt.duration_ms ?? -1)) {
+          testExecutionWallByLabel.set(label, {
+            name: label,
+            duration_ms: executionWallMs,
+            strategy: testResult.executionInfo?.strategy || "n/a",
+            status: testResult.status || "UNKNOWN",
+            attempt: toNumber(testId.attempt),
+            run: toNumber(testId.run),
+            shard: toNumber(testId.shard)
+          });
+        }
         pushTimelineItem({
           group: "test",
           category: "test",
@@ -27887,29 +27885,23 @@ body.review-entry .tab-strip {
     ioItems.sort((left, right) => right.duration_ms - left.duration_ms);
     testExecutionWallItems.sort((left, right) => (right.duration_ms ?? -1) - (left.duration_ms ?? -1));
     slowActions.sort((left, right) => (right.duration_ms ?? -1) - (left.duration_ms ?? -1));
-    tests.sort((left, right) => right.duration_ms - left.duration_ms);
+    testSummaries.sort((left, right) => right.duration_ms - left.duration_ms);
     flakyTests.sort((left, right) => right.duration_ms - left.duration_ms);
+    const topTestExecutionWallByLabel = Array.from(testExecutionWallByLabel.values()).filter((item) => item.duration_ms !== null).sort((left, right) => (right.duration_ms ?? -1) - (left.duration_ms ?? -1));
     const topActionMnemonics = topActionEntries.sort((left, right) => right.span_ms - left.span_ms).slice(0, 8);
     if (summary.started_at_ms !== null && summary.finished_at_ms !== null && summary.finished_at_ms >= summary.started_at_ms) {
       summary.elapsed_ms = summary.finished_at_ms - summary.started_at_ms;
-    }
-    if (summary.action_cache_hits !== null && summary.action_cache_misses !== null) {
-      const totalCacheEvents = summary.action_cache_hits + summary.action_cache_misses;
-      if (totalCacheEvents > 0) {
-        summary.cache_hit_ratio = summary.action_cache_hits / totalCacheEvents;
-      }
-    }
-    if (cacheOverview) {
-      const totalCacheEvents = (cacheOverview.action_hits || 0) + (cacheOverview.action_misses || 0);
-      if (totalCacheEvents > 0) {
-        summary.cache_hit_ratio = (cacheOverview.action_hits || 0) / totalCacheEvents;
-      }
     }
     summary.failed_targets = failedTargets.length;
     if (summary.success === null && abortReason) {
       summary.success = false;
     }
-    const findings = buildFindings(summary, tests.slice(0, 10), topActionMnemonics, timingBreakdownMs);
+    const findings = buildFindings(
+      summary,
+      topTestExecutionWallByLabel.slice(0, 10),
+      topActionMnemonics,
+      timingBreakdownMs
+    );
     if (abortReason) {
       findings.unshift({
         severity: "high",
@@ -27983,7 +27975,8 @@ body.review-entry .tab-strip {
     return {
       analysis: {
         summary,
-        slowest_tests: tests.slice(0, 10),
+        slowest_tests: testSummaries.slice(0, 10),
+        slowest_test_attempts: topTestExecutionWallByLabel.slice(0, 10),
         failed_targets: failedTargets,
         top_action_mnemonics: topActionMnemonics,
         runner_counts: runnerCounts,
@@ -28003,9 +27996,9 @@ body.review-entry .tab-strip {
       cacheMissReasons: Array.from(cacheMissReasons.entries()).sort((left, right) => right[1] - left[1]),
       topCompileItems: compileItems.slice(0, 10),
       topIoItems: ioItems.filter((item) => item.duration_ms > 0).slice(0, 10),
-      topTestExecutionWallItems: testExecutionWallItems.filter((item) => item.duration_ms !== null).slice(0, 10),
+      topTestExecutionWallItems: topTestExecutionWallByLabel.slice(0, 10),
       slowActions: slowActions.filter((item) => item.duration_ms !== null).slice(0, 10),
-      topTests: tests.slice(0, 10),
+      topTestSummaries: testSummaries.slice(0, 10),
       flakyTests: flakyTests.slice(0, 10),
       flakyAttemptsByLabel,
       artifactReferences: artifactReferences.sort((left, right) => {
@@ -68290,7 +68283,7 @@ body.review-entry .tab-strip {
       ["Command", summary.command || "n/a", summary.command_source || null],
       ["Wall Time", formatMs(summary.wall_time_ms ?? summary.elapsed_ms), null],
       ["Critical Path", formatMs(summary.critical_path_ms), null],
-      ["Cache Hit Ratio", formatPercent(summary.cache_hit_ratio), null],
+      ["Action Cache Ratio", formatPercent(summary.cache_hit_ratio), null],
       ["Actions", summary.total_actions ?? "n/a", null],
       ["Failed Tests", summary.failed_tests, null],
       ["Exit Code", summary.exit_code || "n/a", null]
@@ -68475,17 +68468,14 @@ body.review-entry .tab-strip {
       cacheOverviewList,
       insights.cacheOverview ? [insights.cacheOverview] : [],
       (item) => {
-        const hits = item.action_hits;
-        const misses = item.action_misses;
-        const ratio = hits !== null && misses !== null && hits + misses > 0 ? hits / (hits + misses) : null;
         return `
         <li>
           <div class="split-line">
-            <strong>Action Cache</strong>
-            <span class="badge">${formatPercent(ratio)}</span>
+            <strong>Action Cache Statistics</strong>
+            <span class="badge">stats</span>
           </div>
           <div class="muted detail-line">
-            hits=${hits ?? "n/a"} misses=${misses ?? "n/a"} remote_hits=${item.remote_hits ?? "n/a"}
+            hits=${item.action_hits ?? "n/a"} misses=${item.action_misses ?? "n/a"} remote_hits=${item.remote_hits ?? "n/a"}
           </div>
         </li>
       `;
@@ -68545,7 +68535,7 @@ body.review-entry .tab-strip {
           <span class="badge">${formatMs(item.duration_ms)}</span>
         </div>
         <div class="muted detail-line">
-          strategy=${item.strategy} status=${item.status}
+          strategy=${item.strategy} status=${item.status} run=${item.run ?? "n/a"} shard=${item.shard ?? "n/a"} attempt=${item.attempt ?? "n/a"}
         </div>
       </li>
     `,
@@ -68591,7 +68581,7 @@ body.review-entry .tab-strip {
     renderFlakyAttempts(insights, options.activeFlakyLabel);
     createListItems(
       slowTestsList,
-      insights.topTests,
+      insights.topTestSummaries,
       (item) => `
       <li>
         <div class="split-line">
@@ -68599,7 +68589,7 @@ body.review-entry .tab-strip {
           <span class="badge">${formatMs(item.duration_ms)}</span>
         </div>
         <div class="muted detail-line">
-          status=${item.status} cached=${item.cached === null ? "n/a" : String(item.cached)} attempts=${item.attempt_count ?? "n/a"}
+          status=${item.status} cached=${item.cached === null ? "n/a" : String(item.cached)} attempts=${item.attempt_count ?? "n/a"} runs=${item.total_run_count ?? item.run_count ?? "n/a"} summary_duration=true
         </div>
       </li>
     `,
@@ -69216,7 +69206,12 @@ body.review-entry .tab-strip {
           /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(SectionHeading, { eyebrow: "Performance Hotspots", title: "Cache, Tests, Compile, And IO" }),
           /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "grid-2", children: [
             /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("section", { className: "panel", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("h3", { children: "Cache Overview" }),
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("h3", { children: "Action Cache Statistics" }),
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("p", { className: "muted section-copy", children: [
+                "Raw action-cache counters from ",
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("code", { children: "buildMetrics.actionSummary.actionCacheStatistics" }),
+                "."
+              ] }),
               /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("ul", { id: "cache-overview-list", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("section", { className: "panel", children: [
@@ -69238,6 +69233,11 @@ body.review-entry .tab-strip {
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("section", { className: "panel", children: [
               /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("h3", { children: "Top Test Execution Wall Time" }),
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("p", { className: "muted section-copy", children: [
+                "Slowest single test attempts from ",
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("code", { children: "testResult.executionInfo.timingBreakdown" }),
+                "."
+              ] }),
               /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("ul", { id: "test-exec-wall-top-list", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("section", { className: "panel grid-span-2", children: [
@@ -69261,7 +69261,12 @@ body.review-entry .tab-strip {
               /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("ul", { id: "slow-actions-list", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("section", { className: "panel", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("h3", { children: "Top Test Time" }),
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("h3", { children: "Top Test Summary Duration" }),
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("p", { className: "muted section-copy", children: [
+                "Aggregate target-level duration from ",
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("code", { children: "testSummary.totalRunDurationMillis" }),
+                "."
+              ] }),
               /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("ul", { id: "slow-tests-list", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("section", { className: "panel grid-span-2", children: [

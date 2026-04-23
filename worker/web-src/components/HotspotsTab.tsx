@@ -12,7 +12,10 @@ export function HotspotsTab() {
       <SectionHeading eyebrow="Performance Hotspots" title="Cache, Tests, Compile, And IO" />
       <div className="grid-2">
         <section className="panel">
-          <h3>Cache Overview</h3>
+          <h3>Action Cache Statistics</h3>
+          <p className="muted section-copy">
+            Raw action-cache counters from <code>buildMetrics.actionSummary.actionCacheStatistics</code>.
+          </p>
           <ul id="cache-overview-list">
             <li className="muted">No uploaded reviews yet.</li>
           </ul>
@@ -47,6 +50,9 @@ export function HotspotsTab() {
         </section>
         <section className="panel">
           <h3>Top Test Execution Wall Time</h3>
+          <p className="muted section-copy">
+            Slowest single test attempts from <code>testResult.executionInfo.timingBreakdown</code>.
+          </p>
           <ul id="test-exec-wall-top-list">
             <li className="muted">No uploaded reviews yet.</li>
           </ul>
@@ -69,7 +75,10 @@ export function HotspotsTab() {
           </ul>
         </section>
         <section className="panel">
-          <h3>Top Test Time</h3>
+          <h3>Top Test Summary Duration</h3>
+          <p className="muted section-copy">
+            Aggregate target-level duration from <code>testSummary.totalRunDurationMillis</code>.
+          </p>
           <ul id="slow-tests-list">
             <li className="muted">No uploaded reviews yet.</li>
           </ul>
