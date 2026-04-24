@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, env, net::SocketAddr, sync::Arc, time::Duration};
 
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
@@ -246,6 +246,7 @@ impl HttpSinkConfig {
                 let body = normalize_ingest_lines(lines).map_err(|err| {
                     format!("failed to normalize invocation before R2 upload: {err}")
                 })?;
+                log_normalized_event_counts(project_id, stream_id, &body);
                 let normalized_object_key = normalized_object_key(stream_id.invocation_id.as_str());
                 r2_upload
                     .client
@@ -691,6 +692,119 @@ fn normalize_ingest_lines(lines: &[String]) -> Result<String, String> {
     }
 
     Ok(normalized.join("\n"))
+}
+
+fn log_normalized_event_counts(project_id: &str, stream_id: &StreamId, normalized_body: &str) {
+    let counts = summarize_normalized_event_counts(normalized_body);
+    let count_started = counts.get("started").copied().unwrap_or(0);
+    let count_finished = counts.get("finished").copied().unwrap_or(0);
+    let count_build_metrics = counts.get("buildMetrics").copied().unwrap_or(0);
+    let count_action = counts.get("action").copied().unwrap_or(0);
+    let count_test_result = counts.get("testResult").copied().unwrap_or(0);
+    let count_test_summary = counts.get("testSummary").copied().unwrap_or(0);
+    let count_target_configured = counts.get("targetConfigured").copied().unwrap_or(0);
+    let count_target_completed = counts.get("targetCompleted").copied().unwrap_or(0);
+    let missing_core_events = [
+        ("started", count_started),
+        ("finished", count_finished),
+        ("buildMetrics", count_build_metrics),
+        ("action", count_action),
+    ]
+    .into_iter()
+    .filter_map(|(name, count)| (count == 0).then_some(name))
+    .collect::<Vec<_>>()
+    .join(",");
+    let health = classify_normalized_event_health(
+        count_started,
+        count_finished,
+        count_build_metrics,
+        count_action,
+        count_test_result,
+        count_test_summary,
+    );
+    let counts_json = serde_json::to_string(&counts).unwrap_or_else(|_| "{}".to_string());
+
+    info!(
+        invocation_id = stream_id.invocation_id,
+        build_id = stream_id.build_id,
+        project_id,
+        normalized_bytes = normalized_body.len(),
+        count_started,
+        count_finished,
+        count_build_metrics,
+        count_action,
+        count_test_result,
+        count_test_summary,
+        count_target_configured,
+        count_target_completed,
+        has_started = count_started > 0,
+        has_finished = count_finished > 0,
+        has_build_metrics = count_build_metrics > 0,
+        has_action = count_action > 0,
+        health,
+        missing_core_events,
+        counts = counts_json,
+        "normalized invocation event counts before R2 upload"
+    );
+}
+
+fn classify_normalized_event_health(
+    count_started: usize,
+    count_finished: usize,
+    count_build_metrics: usize,
+    count_action: usize,
+    count_test_result: usize,
+    count_test_summary: usize,
+) -> &'static str {
+    if count_started > 0 && count_finished > 0 && count_build_metrics > 0 && count_action > 0 {
+        return "complete";
+    }
+    if count_started == 0 && count_finished == 0 && count_build_metrics == 0 && count_action == 0 {
+        return "missing_core";
+    }
+    if count_finished == 0 && count_build_metrics == 0 && count_action == 0
+        && (count_test_result > 0 || count_test_summary > 0)
+    {
+        return "test_only";
+    }
+    if count_finished == 0 || count_build_metrics == 0 {
+        return "missing_tail";
+    }
+    "partial"
+}
+
+fn summarize_normalized_event_counts(normalized_body: &str) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+
+    for line in normalized_body.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            *counts.entry("invalidJson".to_string()).or_default() += 1;
+            continue;
+        };
+
+        let Some(object) = value.as_object() else {
+            *counts.entry("nonObject".to_string()).or_default() += 1;
+            continue;
+        };
+
+        let Some(id_object) = object.get("id").and_then(Value::as_object) else {
+            *counts.entry("missingId".to_string()).or_default() += 1;
+            continue;
+        };
+
+        if let Some(event_type) = id_object.keys().next() {
+            *counts.entry(event_type.clone()).or_default() += 1;
+        } else {
+            *counts.entry("emptyId".to_string()).or_default() += 1;
+        }
+    }
+
+    counts
 }
 
 fn chunk_lines(lines: &[String], max_chunk_bytes: usize) -> Vec<String> {

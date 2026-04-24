@@ -1054,6 +1054,7 @@ async fn store_ingest_review(
     uploaded_at_ms: i64,
 ) -> Result<()> {
     let metadata = extract_ingest_metadata(raw_ingest_body);
+    log_normalized_event_counts("store_ingest_review_normalized_counts", &metadata, normalized_ingest_body);
     let review_body_pointer = store_review_body(
         env,
         metadata.invocation_id.as_deref(),
@@ -1068,6 +1069,127 @@ async fn store_ingest_review(
         uploaded_at_ms,
     )
     .await
+}
+
+fn log_normalized_event_counts(event_name: &str, metadata: &IngestMetadata, normalized_ingest_body: &str) {
+    let counts = summarize_normalized_event_counts(normalized_ingest_body);
+    let count_started = counts.get("started").copied().unwrap_or(0);
+    let count_finished = counts.get("finished").copied().unwrap_or(0);
+    let count_build_metrics = counts.get("buildMetrics").copied().unwrap_or(0);
+    let count_action = counts.get("action").copied().unwrap_or(0);
+    let count_test_result = counts.get("testResult").copied().unwrap_or(0);
+    let count_test_summary = counts.get("testSummary").copied().unwrap_or(0);
+    let count_target_configured = counts.get("targetConfigured").copied().unwrap_or(0);
+    let count_target_completed = counts.get("targetCompleted").copied().unwrap_or(0);
+    let missing_core_events = [
+        ("started", count_started),
+        ("finished", count_finished),
+        ("buildMetrics", count_build_metrics),
+        ("action", count_action),
+    ]
+    .into_iter()
+    .filter_map(|(name, count)| (count == 0).then_some(name))
+    .collect::<Vec<_>>()
+    .join(",");
+    let health = classify_normalized_event_health(
+        count_started,
+        count_finished,
+        count_build_metrics,
+        count_action,
+        count_test_result,
+        count_test_summary,
+    );
+
+    let counts_json = serde_json::to_string(&counts).unwrap_or_else(|_| "{}".to_string());
+    log_info(
+        event_name,
+        vec![
+            (
+                "invocation_id",
+                metadata.invocation_id.clone().unwrap_or_default(),
+            ),
+            (
+                "project_id",
+                metadata.project_id.clone().unwrap_or_default(),
+            ),
+            ("build_id", metadata.build_id.clone().unwrap_or_default()),
+            ("counts", counts_json),
+            ("normalized_bytes", normalized_ingest_body.len().to_string()),
+            ("count_started", count_started.to_string()),
+            ("count_finished", count_finished.to_string()),
+            ("count_build_metrics", count_build_metrics.to_string()),
+            ("count_action", count_action.to_string()),
+            ("count_test_result", count_test_result.to_string()),
+            ("count_test_summary", count_test_summary.to_string()),
+            ("count_target_configured", count_target_configured.to_string()),
+            ("count_target_completed", count_target_completed.to_string()),
+            ("has_started", (count_started > 0).to_string()),
+            ("has_finished", (count_finished > 0).to_string()),
+            ("has_build_metrics", (count_build_metrics > 0).to_string()),
+            ("has_action", (count_action > 0).to_string()),
+            ("health", health.to_string()),
+            ("missing_core_events", missing_core_events),
+        ],
+    );
+}
+
+fn classify_normalized_event_health(
+    count_started: usize,
+    count_finished: usize,
+    count_build_metrics: usize,
+    count_action: usize,
+    count_test_result: usize,
+    count_test_summary: usize,
+) -> &'static str {
+    if count_started > 0 && count_finished > 0 && count_build_metrics > 0 && count_action > 0 {
+        return "complete";
+    }
+    if count_started == 0 && count_finished == 0 && count_build_metrics == 0 && count_action == 0 {
+        return "missing_core";
+    }
+    if count_finished == 0 && count_build_metrics == 0 && count_action == 0
+        && (count_test_result > 0 || count_test_summary > 0)
+    {
+        return "test_only";
+    }
+    if count_finished == 0 || count_build_metrics == 0 {
+        return "missing_tail";
+    }
+    "partial"
+}
+
+fn summarize_normalized_event_counts(normalized_ingest_body: &str) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+
+    for line in normalized_ingest_body.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            *counts.entry("invalidJson".to_string()).or_default() += 1;
+            continue;
+        };
+
+        let Some(object) = value.as_object() else {
+            *counts.entry("nonObject".to_string()).or_default() += 1;
+            continue;
+        };
+
+        let Some(id_object) = object.get("id").and_then(Value::as_object) else {
+            *counts.entry("missingId".to_string()).or_default() += 1;
+            continue;
+        };
+
+        if let Some(event_type) = id_object.keys().next() {
+            *counts.entry(event_type.clone()).or_default() += 1;
+        } else {
+            *counts.entry("emptyId".to_string()).or_default() += 1;
+        }
+    }
+
+    counts
 }
 
 async fn store_ingest_review_pointer(
