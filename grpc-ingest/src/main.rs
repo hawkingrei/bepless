@@ -885,6 +885,48 @@ fn convert_proto_event_to_json(event: &build_event_stream::BuildEvent) -> Option
         build_event_stream::build_event::Payload::OptionsParsed(options) => {
             object.insert("optionsParsed".to_string(), convert_options_parsed(options));
         }
+        build_event_stream::build_event::Payload::UnstructuredCommandLine(command_line) => {
+            object.insert(
+                "unstructuredCommandLine".to_string(),
+                json!({
+                    "args": command_line.args,
+                }),
+            );
+        }
+        build_event_stream::build_event::Payload::StructuredCommandLine(command_line) => {
+            object.insert(
+                "structuredCommandLine".to_string(),
+                convert_structured_command_line(command_line),
+            );
+        }
+        build_event_stream::build_event::Payload::WorkspaceStatus(workspace_status) => {
+            object.insert(
+                "workspaceStatus".to_string(),
+                convert_workspace_status(workspace_status),
+            );
+        }
+        build_event_stream::build_event::Payload::Fetch(fetch) => {
+            object.insert(
+                "fetch".to_string(),
+                json!({
+                    "success": fetch.success,
+                }),
+            );
+        }
+        build_event_stream::build_event::Payload::Configuration(configuration) => {
+            object.insert(
+                "configuration".to_string(),
+                convert_configuration(configuration),
+            );
+        }
+        build_event_stream::build_event::Payload::WorkspaceInfo(workspace_info) => {
+            object.insert(
+                "workspaceInfo".to_string(),
+                json!({
+                    "localExecRoot": workspace_info.local_exec_root,
+                }),
+            );
+        }
         build_event_stream::build_event::Payload::Aborted(aborted) => {
             object.insert(
                 "aborted".to_string(),
@@ -935,6 +977,14 @@ fn convert_proto_event_to_json(event: &build_event_stream::BuildEvent) -> Option
         build_event_stream::build_event::Payload::TestResult(test_result) => {
             object.insert("testResult".to_string(), convert_test_result(test_result));
         }
+        build_event_stream::build_event::Payload::TestProgress(test_progress) => {
+            object.insert(
+                "testProgress".to_string(),
+                json!({
+                    "uri": test_progress.uri,
+                }),
+            );
+        }
         build_event_stream::build_event::Payload::Action(action) => {
             object.insert("action".to_string(), convert_action_executed(action));
         }
@@ -942,6 +992,12 @@ fn convert_proto_event_to_json(event: &build_event_stream::BuildEvent) -> Option
             object.insert(
                 "testSummary".to_string(),
                 convert_test_summary(test_summary),
+            );
+        }
+        build_event_stream::build_event::Payload::TargetSummary(target_summary) => {
+            object.insert(
+                "targetSummary".to_string(),
+                convert_target_summary(target_summary),
             );
         }
         build_event_stream::build_event::Payload::Finished(finished) => {
@@ -974,6 +1030,18 @@ fn convert_proto_event_to_json(event: &build_event_stream::BuildEvent) -> Option
                 }),
             );
         }
+        build_event_stream::build_event::Payload::ConvenienceSymlinksIdentified(symlinks) => {
+            object.insert(
+                "convenienceSymlinksIdentified".to_string(),
+                convert_convenience_symlinks(symlinks),
+            );
+        }
+        build_event_stream::build_event::Payload::ExecRequest(exec_request) => {
+            object.insert(
+                "execRequest".to_string(),
+                convert_exec_request(exec_request),
+            );
+        }
         _ => return None,
     }
 
@@ -985,6 +1053,28 @@ fn convert_event_id(id: Option<&build_event_stream::BuildEventId>) -> Option<Val
     Some(match id {
         build_event_stream::build_event_id::Id::Progress(_) => json!({ "progress": {} }),
         build_event_stream::build_event_id::Id::Started(_) => json!({ "started": {} }),
+        build_event_stream::build_event_id::Id::UnstructuredCommandLine(_) => {
+            json!({ "unstructuredCommandLine": {} })
+        }
+        build_event_stream::build_event_id::Id::StructuredCommandLine(command_line) => json!({
+            "structuredCommandLine": {
+                "commandLineLabel": command_line.command_line_label,
+            }
+        }),
+        build_event_stream::build_event_id::Id::WorkspaceStatus(_) => {
+            json!({ "workspaceStatus": {} })
+        }
+        build_event_stream::build_event_id::Id::Fetch(fetch) => json!({
+            "fetch": {
+                "url": fetch.url,
+            }
+        }),
+        build_event_stream::build_event_id::Id::Configuration(configuration) => json!({
+            "configuration": {
+                "id": configuration.id,
+            }
+        }),
+        build_event_stream::build_event_id::Id::Workspace(_) => json!({ "workspace": {} }),
         build_event_stream::build_event_id::Id::BuildFinished(_) => {
             json!({ "buildFinished": {} })
         }
@@ -1033,6 +1123,29 @@ fn convert_event_id(id: Option<&build_event_stream::BuildEventId>) -> Option<Val
                 "attempt": test.attempt,
             }
         }),
+        build_event_stream::build_event_id::Id::TestProgress(test) => json!({
+            "testProgress": {
+                "label": test.label,
+                "configuration": {
+                    "id": test.configuration.as_ref().map(|cfg| cfg.id.clone()).unwrap_or_default()
+                },
+                "run": test.run,
+                "shard": test.shard,
+                "attempt": test.attempt,
+            }
+        }),
+        build_event_stream::build_event_id::Id::TargetSummary(target) => json!({
+            "targetSummary": {
+                "label": target.label,
+                "configuration": {
+                    "id": target.configuration.as_ref().map(|cfg| cfg.id.clone()).unwrap_or_default()
+                }
+            }
+        }),
+        build_event_stream::build_event_id::Id::ConvenienceSymlinksIdentified(_) => {
+            json!({ "convenienceSymlinksIdentified": {} })
+        }
+        build_event_stream::build_event_id::Id::ExecRequest(_) => json!({ "execRequest": {} }),
         _ => return None,
     })
 }
@@ -1067,6 +1180,54 @@ fn convert_options_parsed(options: &build_event_stream::OptionsParsed) -> Value 
     })
 }
 
+fn convert_structured_command_line(command_line: &command_line::CommandLine) -> Value {
+    json!({
+        "commandLineLabel": command_line.command_line_label,
+        "sections": command_line.sections.iter().map(|section| {
+            let mut section_object = Map::new();
+            section_object.insert("sectionLabel".to_string(), json!(section.section_label));
+            match section.section_type.as_ref() {
+                Some(command_line::command_line_section::SectionType::ChunkList(chunks)) => {
+                    section_object.insert("chunkList".to_string(), json!({
+                        "chunk": chunks.chunk,
+                    }));
+                }
+                Some(command_line::command_line_section::SectionType::OptionList(options)) => {
+                    section_object.insert("optionList".to_string(), json!({
+                        "option": options.option.iter().map(|option| json!({
+                            "combinedForm": option.combined_form,
+                            "optionName": option.option_name,
+                            "optionValue": option.option_value,
+                            "source": option.source,
+                        })).collect::<Vec<_>>(),
+                    }));
+                }
+                None => {}
+            }
+            Value::Object(section_object)
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn convert_workspace_status(workspace_status: &build_event_stream::WorkspaceStatus) -> Value {
+    json!({
+        "item": workspace_status.item.iter().map(|item| json!({
+            "key": item.key,
+            "value": item.value,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn convert_configuration(configuration: &build_event_stream::Configuration) -> Value {
+    json!({
+        "mnemonic": configuration.mnemonic,
+        "platformName": configuration.platform_name,
+        "cpu": configuration.cpu,
+        "makeVariable": configuration.make_variable,
+        "isTool": configuration.is_tool,
+    })
+}
+
 fn convert_action_executed(action: &build_event_stream::ActionExecuted) -> Value {
     json!({
         "success": action.success,
@@ -1079,6 +1240,48 @@ fn convert_action_executed(action: &build_event_stream::ActionExecuted) -> Value
         "startTimeMillis": proto_timestamp_to_millis(action.start_time.as_ref()).map(|value| value.to_string()),
         "endTimeMillis": proto_timestamp_to_millis(action.end_time.as_ref()).map(|value| value.to_string()),
         "failureDetail": action.failure_detail.as_ref().map(|detail| detail.message.clone()),
+    })
+}
+
+fn convert_target_summary(target_summary: &build_event_stream::TargetSummary) -> Value {
+    json!({
+        "overallBuildSuccess": target_summary.overall_build_success,
+        "overallTestStatus": build_event_stream::TestStatus::try_from(target_summary.overall_test_status)
+            .ok()
+            .map(|status| status.as_str_name())
+            .unwrap_or("NO_STATUS"),
+    })
+}
+
+fn convert_convenience_symlinks(
+    symlinks: &build_event_stream::ConvenienceSymlinksIdentified,
+) -> Value {
+    json!({
+        "convenienceSymlinks": symlinks.convenience_symlinks.iter().map(|symlink| json!({
+            "path": symlink.path,
+            "action": build_event_stream::convenience_symlink::Action::try_from(symlink.action)
+                .ok()
+                .map(|action| action.as_str_name())
+                .unwrap_or("UNKNOWN"),
+            "target": symlink.target,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn convert_exec_request(exec_request: &build_event_stream::ExecRequestConstructed) -> Value {
+    json!({
+        "workingDirectory": String::from_utf8_lossy(&exec_request.working_directory).to_string(),
+        "argv": exec_request.argv.iter().map(|arg| String::from_utf8_lossy(arg).to_string()).collect::<Vec<_>>(),
+        "environmentVariable": exec_request.environment_variable.iter().map(|variable| json!({
+            "name": String::from_utf8_lossy(&variable.name).to_string(),
+            "value": String::from_utf8_lossy(&variable.value).to_string(),
+        })).collect::<Vec<_>>(),
+        "environmentVariableToClear": exec_request
+            .environment_variable_to_clear
+            .iter()
+            .map(|name| String::from_utf8_lossy(name).to_string())
+            .collect::<Vec<_>>(),
+        "shouldExec": exec_request.should_exec,
     })
 }
 

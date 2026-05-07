@@ -23,6 +23,15 @@ export function SummaryTab() {
             <li className="muted">No uploaded reviews yet.</li>
           </ul>
         </section>
+        <section className="panel grid-span-2">
+          <h3>Target Summaries</h3>
+          <p className="muted section-copy">
+            Target-level aggregate result from <code>targetSummary</code> events.
+          </p>
+          <ul id="target-summaries-list">
+            <li className="muted">No uploaded reviews yet.</li>
+          </ul>
+        </section>
       </div>
     </section>
   );

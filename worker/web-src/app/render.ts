@@ -4,6 +4,10 @@ import {
   buildMetadataList,
   cacheMissReasonsList,
   cacheOverviewList,
+  commandLineList,
+  configurationsList,
+  convenienceSymlinksList,
+  execRequestList,
   compileTopList,
   failedTargetsList,
   findingsList,
@@ -17,12 +21,16 @@ import {
   slowActionsList,
   slowTestsList,
   summaryGrid,
+  targetSummariesList,
   testExecWallTopList,
+  testProgressList,
   timelineChart,
   timelineDetail,
   timelineSummary,
   timingBreakdownList,
   timingMetricsList,
+  workspaceInfoList,
+  workspaceStatusList,
   workerStatsList,
   runnerCountsList,
 } from "./dom";
@@ -365,6 +373,67 @@ export function renderBrowserInsights(insights: any, options: AnalysisRenderOpti
   );
 
   createListItems(
+    commandLineList,
+    insights.commandLineArgs && insights.commandLineArgs.length > 0 ? [insights.commandLineArgs] : [],
+    (args) => `
+      <li>
+        <div class="split-line">
+          <strong>Invocation Args</strong>
+          <span class="badge">${args.length} args</span>
+        </div>
+        <pre class="command-preview">${escapeHtml(args.join(" "))}</pre>
+      </li>
+    `,
+    "No command-line event reported.",
+  );
+
+  createListItems(
+    workspaceStatusList,
+    Object.entries(insights.workspaceStatus || {}).sort((left: any, right: any) =>
+      String(left[0]).localeCompare(String(right[0])),
+    ),
+    ([key, value]) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${escapeHtml(key)}</strong>
+          <span class="badge">workspace</span>
+        </div>
+        <div class="muted detail-line"><span class="mono">${escapeHtml(String(value))}</span></div>
+      </li>
+    `,
+    "No workspace status entries.",
+  );
+
+  createListItems(
+    workspaceInfoList,
+    insights.workspaceInfo ? [["Local Exec Root", insights.workspaceInfo.local_exec_root || "n/a"]] : [],
+    ([label, value]) => `
+      <li class="split-line">
+        <span>${label}</span>
+        <span class="badge mono">${escapeHtml(String(value))}</span>
+      </li>
+    `,
+    "No workspace info event.",
+  );
+
+  createListItems(
+    configurationsList,
+    insights.configurations,
+    (item) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${escapeHtml(item.id)}</strong>
+          <span class="badge">${escapeHtml(item.mnemonic)}</span>
+        </div>
+        <div class="muted detail-line">
+          platform=${escapeHtml(item.platform_name)} cpu=${escapeHtml(item.cpu)} tool=${String(item.is_tool)} make_vars=${item.make_variable_count}
+        </div>
+      </li>
+    `,
+    "No configuration events.",
+  );
+
+  createListItems(
     hostJvmArgsList,
     insights.hostJvmArgs,
     (item) => `
@@ -628,6 +697,59 @@ export function renderBrowserInsights(insights: any, options: AnalysisRenderOpti
     `,
     "No test summaries.",
   );
+
+  createListItems(
+    testProgressList,
+    insights.testProgressItems,
+    (item) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${escapeHtml(item.label)}</strong>
+          <span class="badge">attempt=${item.attempt ?? "n/a"}</span>
+        </div>
+        <div class="muted detail-line">
+          run=${item.run ?? "n/a"} shard=${item.shard ?? "n/a"}
+        </div>
+        <div class="attempt-output-item">
+          <a class="attempt-output-link" href="${escapeHtml(item.uri)}" target="_blank" rel="noreferrer">${escapeHtml(item.uri)}</a>
+        </div>
+      </li>
+    `,
+    "No test progress URIs.",
+  );
+
+  createListItems(
+    convenienceSymlinksList,
+    insights.convenienceSymlinks,
+    (item) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${escapeHtml(item.path)}</strong>
+          <span class="badge">${escapeHtml(item.action)}</span>
+        </div>
+        <div class="muted detail-line">target=${escapeHtml(item.target || "n/a")}</div>
+      </li>
+    `,
+    "No convenience symlink events.",
+  );
+
+  createListItems(
+    execRequestList,
+    insights.execRequest ? [insights.execRequest] : [],
+    (item) => `
+      <li>
+        <div class="split-line">
+          <strong>Run Exec Request</strong>
+          <span class="badge">should_exec=${String(item.should_exec)}</span>
+        </div>
+        <div class="muted detail-line">
+          cwd=${escapeHtml(item.working_directory || "n/a")} env=${item.environment_variable_count} clear_env=${item.environment_variable_to_clear_count}
+        </div>
+        <pre class="command-preview">${escapeHtml((item.argv || []).join(" "))}</pre>
+      </li>
+    `,
+    "No exec request event.",
+  );
 }
 
 export function renderAnalysis(payload: any, browserInsights: any, options: AnalysisRenderOptions) {
@@ -657,6 +779,23 @@ export function renderAnalysis(payload: any, browserInsights: any, options: Anal
       <li><span class="mono">${item}</span></li>
     `,
     "No failed targets.",
+  );
+
+  createListItems(
+    targetSummariesList,
+    browserInsights.targetSummaries,
+    (item) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${escapeHtml(item.label)}</strong>
+          <span class="badge">${escapeHtml(item.overall_test_status)}</span>
+        </div>
+        <div class="muted detail-line">
+          build_success=${String(item.overall_build_success)} configuration=${escapeHtml(item.configuration)}
+        </div>
+      </li>
+    `,
+    "No target summary events.",
   );
 
   createListItems(
@@ -708,6 +847,10 @@ export function resetReviewPanels(message = "No uploaded reviews yet.") {
   timelineSummary.textContent = message;
   timelineChart.innerHTML = `<div class="muted">${message}</div>`;
   buildMetadataList.innerHTML = `<li class="muted">${message}</li>`;
+  commandLineList.innerHTML = `<li class="muted">${message}</li>`;
+  workspaceStatusList.innerHTML = `<li class="muted">${message}</li>`;
+  workspaceInfoList.innerHTML = `<li class="muted">${message}</li>`;
+  configurationsList.innerHTML = `<li class="muted">${message}</li>`;
   hostJvmArgsList.innerHTML = `<li class="muted">${message}</li>`;
   jvmMetricsList.innerHTML = `<li class="muted">${message}</li>`;
   timingMetricsList.innerHTML = `<li class="muted">${message}</li>`;
@@ -715,6 +858,7 @@ export function resetReviewPanels(message = "No uploaded reviews yet.") {
   workerStatsList.innerHTML = `<li class="muted">${message}</li>`;
   findingsList.innerHTML = `<li class="muted">${message}</li>`;
   failedTargetsList.innerHTML = `<li class="muted">${message}</li>`;
+  targetSummariesList.innerHTML = `<li class="muted">${message}</li>`;
   cacheOverviewList.innerHTML = `<li class="muted">${message}</li>`;
   cacheMissReasonsList.innerHTML = `<li class="muted">${message}</li>`;
   flakyTestsList.innerHTML = `<li class="muted">${message}</li>`;
@@ -727,4 +871,7 @@ export function resetReviewPanels(message = "No uploaded reviews yet.") {
   actionsList.innerHTML = `<li class="muted">${message}</li>`;
   runnerCountsList.innerHTML = `<li class="muted">${message}</li>`;
   timingBreakdownList.innerHTML = `<li class="muted">${message}</li>`;
+  testProgressList.innerHTML = `<li class="muted">${message}</li>`;
+  convenienceSymlinksList.innerHTML = `<li class="muted">${message}</li>`;
+  execRequestList.innerHTML = `<li class="muted">${message}</li>`;
 }

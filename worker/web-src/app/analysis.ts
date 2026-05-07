@@ -96,6 +96,24 @@ function inferCommandFromOptionsParsed(optionsParsed) {
   return null;
 }
 
+function structuredCommandLineArgs(commandLine) {
+  const args = [];
+  for (const section of commandLine?.sections || []) {
+    if (Array.isArray(section.chunkList?.chunk)) {
+      args.push(...section.chunkList.chunk.filter(Boolean));
+    }
+    if (Array.isArray(section.optionList?.option)) {
+      for (const option of section.optionList.option) {
+        const combined = String(option.combinedForm || "").trim();
+        if (combined) {
+          args.push(combined);
+        }
+      }
+    }
+  }
+  return args;
+}
+
 function foldTimingBreakdownTotals(node, totals) {
   if (!node || typeof node !== "object") return;
   const name = node.name ? String(node.name) : null;
@@ -215,6 +233,12 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
   const cacheMissReasons = new Map();
   const hostJvmArgs = new Set();
   const buildMetadata: Record<string, string> = {};
+  const workspaceStatus: Record<string, string> = {};
+  const commandLineArgs = [];
+  const configurations = [];
+  const targetSummaries = [];
+  const testProgressItems = [];
+  const convenienceSymlinks = [];
   const failedTargets = [];
   const runnerCounts = {};
   const testStrategyCounts = {};
@@ -257,6 +281,8 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
   let jvmMetrics = null;
   let timingMetrics = null;
   let networkMetrics = null;
+  let workspaceInfo = null;
+  let execRequest = null;
   let invocationWindow = null;
   const workerMetrics = [];
   let timelineItemId = 0;
@@ -311,6 +337,87 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
           buildMetadata[String(key)] = normalizedValue;
         }
       }
+    }
+
+    if (event.unstructuredCommandLine?.args && Array.isArray(event.unstructuredCommandLine.args)) {
+      commandLineArgs.splice(0, commandLineArgs.length, ...event.unstructuredCommandLine.args.filter(Boolean));
+    }
+
+    if (commandLineArgs.length === 0 && event.structuredCommandLine) {
+      const structuredArgs = structuredCommandLineArgs(event.structuredCommandLine);
+      if (structuredArgs.length > 0) {
+        commandLineArgs.push(...structuredArgs);
+      }
+    }
+
+    if (event.workspaceStatus?.item && Array.isArray(event.workspaceStatus.item)) {
+      for (const item of event.workspaceStatus.item) {
+        const key = String(item.key || "").trim();
+        const value = String(item.value || "").trim();
+        if (key && value) {
+          workspaceStatus[key] = value;
+        }
+      }
+    }
+
+    if (event.workspaceInfo) {
+      workspaceInfo = {
+        local_exec_root: event.workspaceInfo.localExecRoot || null,
+      };
+    }
+
+    if (event.id?.configuration && event.configuration) {
+      configurations.push({
+        id: event.id.configuration.id || "n/a",
+        mnemonic: event.configuration.mnemonic || "n/a",
+        platform_name: event.configuration.platformName || "n/a",
+        cpu: event.configuration.cpu || "n/a",
+        is_tool: Boolean(event.configuration.isTool),
+        make_variable_count: Object.keys(event.configuration.makeVariable || {}).length,
+      });
+    }
+
+    if (event.id?.targetSummary && event.targetSummary) {
+      targetSummaries.push({
+        label: event.id.targetSummary.label || "<unknown>",
+        configuration: event.id.targetSummary.configuration?.id || "n/a",
+        overall_build_success: Boolean(event.targetSummary.overallBuildSuccess),
+        overall_test_status: event.targetSummary.overallTestStatus || "NO_STATUS",
+      });
+    }
+
+    if (event.id?.testProgress && event.testProgress?.uri) {
+      testProgressItems.push({
+        label: event.id.testProgress.label || "<unknown>",
+        run: toNumber(event.id.testProgress.run),
+        shard: toNumber(event.id.testProgress.shard),
+        attempt: toNumber(event.id.testProgress.attempt),
+        uri: event.testProgress.uri,
+      });
+    }
+
+    if (event.convenienceSymlinksIdentified?.convenienceSymlinks) {
+      for (const symlink of event.convenienceSymlinksIdentified.convenienceSymlinks) {
+        convenienceSymlinks.push({
+          path: symlink.path || "n/a",
+          action: symlink.action || "UNKNOWN",
+          target: symlink.target || "",
+        });
+      }
+    }
+
+    if (event.execRequest) {
+      execRequest = {
+        working_directory: event.execRequest.workingDirectory || "",
+        argv: Array.isArray(event.execRequest.argv) ? event.execRequest.argv : [],
+        environment_variable_count: Array.isArray(event.execRequest.environmentVariable)
+          ? event.execRequest.environmentVariable.length
+          : 0,
+        environment_variable_to_clear_count: Array.isArray(event.execRequest.environmentVariableToClear)
+          ? event.execRequest.environmentVariableToClear.length
+          : 0,
+        should_exec: Boolean(event.execRequest.shouldExec),
+      };
     }
 
     const buildMetrics = event.buildMetrics;
@@ -426,6 +533,15 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
         if (inferredCommand) {
           summary.command = inferredCommand;
           summary.command_source = "optionsParsed.cmdLine";
+        }
+      }
+      if (commandLineArgs.length === 0) {
+        const parsedArgs = [
+          ...(event.optionsParsed.cmdLine || []),
+          ...(event.optionsParsed.explicitCmdLine || []),
+        ].filter(Boolean);
+        if (parsedArgs.length > 0) {
+          commandLineArgs.push(...parsedArgs);
         }
       }
       for (const option of event.optionsParsed.startupOptions || []) {
@@ -872,6 +988,21 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
     },
     cacheOverview,
     buildMetadata,
+    workspaceStatus,
+    commandLineArgs,
+    workspaceInfo,
+    configurations: configurations.slice(0, 30),
+    targetSummaries: targetSummaries
+      .sort((left, right) => {
+        if (left.overall_build_success !== right.overall_build_success) {
+          return left.overall_build_success ? 1 : -1;
+        }
+        return String(left.label).localeCompare(String(right.label));
+      })
+      .slice(0, 50),
+    testProgressItems: testProgressItems.slice(0, 30),
+    convenienceSymlinks: convenienceSymlinks.slice(0, 30),
+    execRequest,
     hostJvmArgs: Array.from(hostJvmArgs),
     jvmMetrics,
     timingMetrics,

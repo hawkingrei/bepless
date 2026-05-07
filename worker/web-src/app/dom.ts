@@ -17,6 +17,10 @@ export let timelineDetail: HTMLElement | null;
 export let timelineFilterButtons: HTMLElement[] = [];
 export let timelineLimit: HTMLSelectElement | null;
 export let buildMetadataList: HTMLElement | null;
+export let commandLineList: HTMLElement | null;
+export let workspaceStatusList: HTMLElement | null;
+export let workspaceInfoList: HTMLElement | null;
+export let configurationsList: HTMLElement | null;
 export let hostJvmArgsList: HTMLElement | null;
 export let jvmMetricsList: HTMLElement | null;
 export let timingMetricsList: HTMLElement | null;
@@ -24,6 +28,7 @@ export let networkMetricsList: HTMLElement | null;
 export let workerStatsList: HTMLElement | null;
 export let findingsList: HTMLElement | null;
 export let failedTargetsList: HTMLElement | null;
+export let targetSummariesList: HTMLElement | null;
 export let cacheOverviewList: HTMLElement | null;
 export let cacheMissReasonsList: HTMLElement | null;
 export let flakyTestsList: HTMLElement | null;
@@ -37,6 +42,9 @@ export let slowTestsList: HTMLElement | null;
 export let actionsList: HTMLElement | null;
 export let runnerCountsList: HTMLElement | null;
 export let timingBreakdownList: HTMLElement | null;
+export let testProgressList: HTMLElement | null;
+export let convenienceSymlinksList: HTMLElement | null;
+export let execRequestList: HTMLElement | null;
 
 export function initDom() {
   status = document.getElementById("status");
@@ -60,6 +68,10 @@ export function initDom() {
   ) as HTMLElement[];
   timelineLimit = document.getElementById("timeline-limit") as HTMLSelectElement | null;
   buildMetadataList = document.getElementById("build-metadata-list");
+  commandLineList = document.getElementById("command-line-list");
+  workspaceStatusList = document.getElementById("workspace-status-list");
+  workspaceInfoList = document.getElementById("workspace-info-list");
+  configurationsList = document.getElementById("configurations-list");
   hostJvmArgsList = document.getElementById("host-jvm-args-list");
   jvmMetricsList = document.getElementById("jvm-metrics-list");
   timingMetricsList = document.getElementById("timing-metrics-list");
@@ -67,6 +79,7 @@ export function initDom() {
   workerStatsList = document.getElementById("worker-stats-list");
   findingsList = document.getElementById("findings-list");
   failedTargetsList = document.getElementById("failed-targets-list");
+  targetSummariesList = document.getElementById("target-summaries-list");
   cacheOverviewList = document.getElementById("cache-overview-list");
   cacheMissReasonsList = document.getElementById("cache-miss-reasons-list");
   flakyTestsList = document.getElementById("flaky-tests-list");
@@ -80,4 +93,7 @@ export function initDom() {
   actionsList = document.getElementById("actions-list");
   runnerCountsList = document.getElementById("runner-counts-list");
   timingBreakdownList = document.getElementById("timing-breakdown-list");
+  testProgressList = document.getElementById("test-progress-list");
+  convenienceSymlinksList = document.getElementById("convenience-symlinks-list");
+  execRequestList = document.getElementById("exec-request-list");
 }

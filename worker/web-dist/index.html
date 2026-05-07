@@ -27104,6 +27104,18 @@ body.review-entry .tab-strip {
             /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "panel grid-span-2", children: [
               /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h3", { children: "Timing Breakdown" }),
               /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { id: "timing-breakdown-list", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "panel", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h3", { children: "Test Progress URIs" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { id: "test-progress-list", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "panel", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h3", { children: "Convenience Symlinks" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { id: "convenience-symlinks-list", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "panel grid-span-2", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h3", { children: "Exec Request" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { id: "exec-request-list", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
             ] })
           ] })
         ]
@@ -27130,6 +27142,10 @@ body.review-entry .tab-strip {
   var timelineFilterButtons = [];
   var timelineLimit;
   var buildMetadataList;
+  var commandLineList;
+  var workspaceStatusList;
+  var workspaceInfoList;
+  var configurationsList;
   var hostJvmArgsList;
   var jvmMetricsList;
   var timingMetricsList;
@@ -27137,6 +27153,7 @@ body.review-entry .tab-strip {
   var workerStatsList;
   var findingsList;
   var failedTargetsList;
+  var targetSummariesList;
   var cacheOverviewList;
   var cacheMissReasonsList;
   var flakyTestsList;
@@ -27150,6 +27167,9 @@ body.review-entry .tab-strip {
   var actionsList;
   var runnerCountsList;
   var timingBreakdownList;
+  var testProgressList;
+  var convenienceSymlinksList;
+  var execRequestList;
   function initDom() {
     status = document.getElementById("status");
     refreshBtn = document.getElementById("refresh-btn");
@@ -27171,6 +27191,10 @@ body.review-entry .tab-strip {
     );
     timelineLimit = document.getElementById("timeline-limit");
     buildMetadataList = document.getElementById("build-metadata-list");
+    commandLineList = document.getElementById("command-line-list");
+    workspaceStatusList = document.getElementById("workspace-status-list");
+    workspaceInfoList = document.getElementById("workspace-info-list");
+    configurationsList = document.getElementById("configurations-list");
     hostJvmArgsList = document.getElementById("host-jvm-args-list");
     jvmMetricsList = document.getElementById("jvm-metrics-list");
     timingMetricsList = document.getElementById("timing-metrics-list");
@@ -27178,6 +27202,7 @@ body.review-entry .tab-strip {
     workerStatsList = document.getElementById("worker-stats-list");
     findingsList = document.getElementById("findings-list");
     failedTargetsList = document.getElementById("failed-targets-list");
+    targetSummariesList = document.getElementById("target-summaries-list");
     cacheOverviewList = document.getElementById("cache-overview-list");
     cacheMissReasonsList = document.getElementById("cache-miss-reasons-list");
     flakyTestsList = document.getElementById("flaky-tests-list");
@@ -27191,6 +27216,9 @@ body.review-entry .tab-strip {
     actionsList = document.getElementById("actions-list");
     runnerCountsList = document.getElementById("runner-counts-list");
     timingBreakdownList = document.getElementById("timing-breakdown-list");
+    testProgressList = document.getElementById("test-progress-list");
+    convenienceSymlinksList = document.getElementById("convenience-symlinks-list");
+    execRequestList = document.getElementById("exec-request-list");
   }
 
   // web-src/app/utils.ts
@@ -27331,6 +27359,23 @@ body.review-entry .tab-strip {
     }
     return null;
   }
+  function structuredCommandLineArgs(commandLine) {
+    const args = [];
+    for (const section of commandLine?.sections || []) {
+      if (Array.isArray(section.chunkList?.chunk)) {
+        args.push(...section.chunkList.chunk.filter(Boolean));
+      }
+      if (Array.isArray(section.optionList?.option)) {
+        for (const option2 of section.optionList.option) {
+          const combined = String(option2.combinedForm || "").trim();
+          if (combined) {
+            args.push(combined);
+          }
+        }
+      }
+    }
+    return args;
+  }
   function foldTimingBreakdownTotals(node, totals) {
     if (!node || typeof node !== "object") return;
     const name = node.name ? String(node.name) : null;
@@ -27417,6 +27462,12 @@ body.review-entry .tab-strip {
     const cacheMissReasons = /* @__PURE__ */ new Map();
     const hostJvmArgs = /* @__PURE__ */ new Set();
     const buildMetadata = {};
+    const workspaceStatus = {};
+    const commandLineArgs = [];
+    const configurations = [];
+    const targetSummaries = [];
+    const testProgressItems = [];
+    const convenienceSymlinks = [];
     const failedTargets = [];
     const runnerCounts = {};
     const testStrategyCounts = {};
@@ -27459,6 +27510,8 @@ body.review-entry .tab-strip {
     let jvmMetrics = null;
     let timingMetrics = null;
     let networkMetrics = null;
+    let workspaceInfo = null;
+    let execRequest = null;
     let invocationWindow = null;
     const workerMetrics = [];
     let timelineItemId = 0;
@@ -27504,6 +27557,74 @@ body.review-entry .tab-strip {
             buildMetadata[String(key)] = normalizedValue;
           }
         }
+      }
+      if (event2.unstructuredCommandLine?.args && Array.isArray(event2.unstructuredCommandLine.args)) {
+        commandLineArgs.splice(0, commandLineArgs.length, ...event2.unstructuredCommandLine.args.filter(Boolean));
+      }
+      if (commandLineArgs.length === 0 && event2.structuredCommandLine) {
+        const structuredArgs = structuredCommandLineArgs(event2.structuredCommandLine);
+        if (structuredArgs.length > 0) {
+          commandLineArgs.push(...structuredArgs);
+        }
+      }
+      if (event2.workspaceStatus?.item && Array.isArray(event2.workspaceStatus.item)) {
+        for (const item of event2.workspaceStatus.item) {
+          const key = String(item.key || "").trim();
+          const value = String(item.value || "").trim();
+          if (key && value) {
+            workspaceStatus[key] = value;
+          }
+        }
+      }
+      if (event2.workspaceInfo) {
+        workspaceInfo = {
+          local_exec_root: event2.workspaceInfo.localExecRoot || null
+        };
+      }
+      if (event2.id?.configuration && event2.configuration) {
+        configurations.push({
+          id: event2.id.configuration.id || "n/a",
+          mnemonic: event2.configuration.mnemonic || "n/a",
+          platform_name: event2.configuration.platformName || "n/a",
+          cpu: event2.configuration.cpu || "n/a",
+          is_tool: Boolean(event2.configuration.isTool),
+          make_variable_count: Object.keys(event2.configuration.makeVariable || {}).length
+        });
+      }
+      if (event2.id?.targetSummary && event2.targetSummary) {
+        targetSummaries.push({
+          label: event2.id.targetSummary.label || "<unknown>",
+          configuration: event2.id.targetSummary.configuration?.id || "n/a",
+          overall_build_success: Boolean(event2.targetSummary.overallBuildSuccess),
+          overall_test_status: event2.targetSummary.overallTestStatus || "NO_STATUS"
+        });
+      }
+      if (event2.id?.testProgress && event2.testProgress?.uri) {
+        testProgressItems.push({
+          label: event2.id.testProgress.label || "<unknown>",
+          run: toNumber(event2.id.testProgress.run),
+          shard: toNumber(event2.id.testProgress.shard),
+          attempt: toNumber(event2.id.testProgress.attempt),
+          uri: event2.testProgress.uri
+        });
+      }
+      if (event2.convenienceSymlinksIdentified?.convenienceSymlinks) {
+        for (const symlink of event2.convenienceSymlinksIdentified.convenienceSymlinks) {
+          convenienceSymlinks.push({
+            path: symlink.path || "n/a",
+            action: symlink.action || "UNKNOWN",
+            target: symlink.target || ""
+          });
+        }
+      }
+      if (event2.execRequest) {
+        execRequest = {
+          working_directory: event2.execRequest.workingDirectory || "",
+          argv: Array.isArray(event2.execRequest.argv) ? event2.execRequest.argv : [],
+          environment_variable_count: Array.isArray(event2.execRequest.environmentVariable) ? event2.execRequest.environmentVariable.length : 0,
+          environment_variable_to_clear_count: Array.isArray(event2.execRequest.environmentVariableToClear) ? event2.execRequest.environmentVariableToClear.length : 0,
+          should_exec: Boolean(event2.execRequest.shouldExec)
+        };
       }
       const buildMetrics = event2.buildMetrics;
       if (buildMetrics && buildMetrics.actionSummary) {
@@ -27608,6 +27729,15 @@ body.review-entry .tab-strip {
           if (inferredCommand) {
             summary.command = inferredCommand;
             summary.command_source = "optionsParsed.cmdLine";
+          }
+        }
+        if (commandLineArgs.length === 0) {
+          const parsedArgs = [
+            ...event2.optionsParsed.cmdLine || [],
+            ...event2.optionsParsed.explicitCmdLine || []
+          ].filter(Boolean);
+          if (parsedArgs.length > 0) {
+            commandLineArgs.push(...parsedArgs);
           }
         }
         for (const option2 of event2.optionsParsed.startupOptions || []) {
@@ -27997,6 +28127,19 @@ body.review-entry .tab-strip {
       },
       cacheOverview,
       buildMetadata,
+      workspaceStatus,
+      commandLineArgs,
+      workspaceInfo,
+      configurations: configurations.slice(0, 30),
+      targetSummaries: targetSummaries.sort((left, right) => {
+        if (left.overall_build_success !== right.overall_build_success) {
+          return left.overall_build_success ? 1 : -1;
+        }
+        return String(left.label).localeCompare(String(right.label));
+      }).slice(0, 50),
+      testProgressItems: testProgressItems.slice(0, 30),
+      convenienceSymlinks: convenienceSymlinks.slice(0, 30),
+      execRequest,
       hostJvmArgs: Array.from(hostJvmArgs),
       jvmMetrics,
       timingMetrics,
@@ -68401,6 +68544,63 @@ body.review-entry .tab-strip {
       "No build metadata reported."
     );
     createListItems(
+      commandLineList,
+      insights.commandLineArgs && insights.commandLineArgs.length > 0 ? [insights.commandLineArgs] : [],
+      (args) => `
+      <li>
+        <div class="split-line">
+          <strong>Invocation Args</strong>
+          <span class="badge">${args.length} args</span>
+        </div>
+        <pre class="command-preview">${escapeHtml(args.join(" "))}</pre>
+      </li>
+    `,
+      "No command-line event reported."
+    );
+    createListItems(
+      workspaceStatusList,
+      Object.entries(insights.workspaceStatus || {}).sort(
+        (left, right) => String(left[0]).localeCompare(String(right[0]))
+      ),
+      ([key, value]) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${escapeHtml(key)}</strong>
+          <span class="badge">workspace</span>
+        </div>
+        <div class="muted detail-line"><span class="mono">${escapeHtml(String(value))}</span></div>
+      </li>
+    `,
+      "No workspace status entries."
+    );
+    createListItems(
+      workspaceInfoList,
+      insights.workspaceInfo ? [["Local Exec Root", insights.workspaceInfo.local_exec_root || "n/a"]] : [],
+      ([label, value]) => `
+      <li class="split-line">
+        <span>${label}</span>
+        <span class="badge mono">${escapeHtml(String(value))}</span>
+      </li>
+    `,
+      "No workspace info event."
+    );
+    createListItems(
+      configurationsList,
+      insights.configurations,
+      (item) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${escapeHtml(item.id)}</strong>
+          <span class="badge">${escapeHtml(item.mnemonic)}</span>
+        </div>
+        <div class="muted detail-line">
+          platform=${escapeHtml(item.platform_name)} cpu=${escapeHtml(item.cpu)} tool=${String(item.is_tool)} make_vars=${item.make_variable_count}
+        </div>
+      </li>
+    `,
+      "No configuration events."
+    );
+    createListItems(
       hostJvmArgsList,
       insights.hostJvmArgs,
       (item) => `
@@ -68638,6 +68838,56 @@ body.review-entry .tab-strip {
     `,
       "No test summaries."
     );
+    createListItems(
+      testProgressList,
+      insights.testProgressItems,
+      (item) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${escapeHtml(item.label)}</strong>
+          <span class="badge">attempt=${item.attempt ?? "n/a"}</span>
+        </div>
+        <div class="muted detail-line">
+          run=${item.run ?? "n/a"} shard=${item.shard ?? "n/a"}
+        </div>
+        <div class="attempt-output-item">
+          <a class="attempt-output-link" href="${escapeHtml(item.uri)}" target="_blank" rel="noreferrer">${escapeHtml(item.uri)}</a>
+        </div>
+      </li>
+    `,
+      "No test progress URIs."
+    );
+    createListItems(
+      convenienceSymlinksList,
+      insights.convenienceSymlinks,
+      (item) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${escapeHtml(item.path)}</strong>
+          <span class="badge">${escapeHtml(item.action)}</span>
+        </div>
+        <div class="muted detail-line">target=${escapeHtml(item.target || "n/a")}</div>
+      </li>
+    `,
+      "No convenience symlink events."
+    );
+    createListItems(
+      execRequestList,
+      insights.execRequest ? [insights.execRequest] : [],
+      (item) => `
+      <li>
+        <div class="split-line">
+          <strong>Run Exec Request</strong>
+          <span class="badge">should_exec=${String(item.should_exec)}</span>
+        </div>
+        <div class="muted detail-line">
+          cwd=${escapeHtml(item.working_directory || "n/a")} env=${item.environment_variable_count} clear_env=${item.environment_variable_to_clear_count}
+        </div>
+        <pre class="command-preview">${escapeHtml((item.argv || []).join(" "))}</pre>
+      </li>
+    `,
+      "No exec request event."
+    );
   }
   function renderAnalysis(payload, browserInsights, options) {
     renderSummary(payload.summary);
@@ -68664,6 +68914,22 @@ body.review-entry .tab-strip {
       <li><span class="mono">${item}</span></li>
     `,
       "No failed targets."
+    );
+    createListItems(
+      targetSummariesList,
+      browserInsights.targetSummaries,
+      (item) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${escapeHtml(item.label)}</strong>
+          <span class="badge">${escapeHtml(item.overall_test_status)}</span>
+        </div>
+        <div class="muted detail-line">
+          build_success=${String(item.overall_build_success)} configuration=${escapeHtml(item.configuration)}
+        </div>
+      </li>
+    `,
+      "No target summary events."
     );
     createListItems(
       actionsList,
@@ -68711,6 +68977,10 @@ body.review-entry .tab-strip {
     timelineSummary.textContent = message;
     timelineChart.innerHTML = `<div class="muted">${message}</div>`;
     buildMetadataList.innerHTML = `<li class="muted">${message}</li>`;
+    commandLineList.innerHTML = `<li class="muted">${message}</li>`;
+    workspaceStatusList.innerHTML = `<li class="muted">${message}</li>`;
+    workspaceInfoList.innerHTML = `<li class="muted">${message}</li>`;
+    configurationsList.innerHTML = `<li class="muted">${message}</li>`;
     hostJvmArgsList.innerHTML = `<li class="muted">${message}</li>`;
     jvmMetricsList.innerHTML = `<li class="muted">${message}</li>`;
     timingMetricsList.innerHTML = `<li class="muted">${message}</li>`;
@@ -68718,6 +68988,7 @@ body.review-entry .tab-strip {
     workerStatsList.innerHTML = `<li class="muted">${message}</li>`;
     findingsList.innerHTML = `<li class="muted">${message}</li>`;
     failedTargetsList.innerHTML = `<li class="muted">${message}</li>`;
+    targetSummariesList.innerHTML = `<li class="muted">${message}</li>`;
     cacheOverviewList.innerHTML = `<li class="muted">${message}</li>`;
     cacheMissReasonsList.innerHTML = `<li class="muted">${message}</li>`;
     flakyTestsList.innerHTML = `<li class="muted">${message}</li>`;
@@ -68730,6 +69001,9 @@ body.review-entry .tab-strip {
     actionsList.innerHTML = `<li class="muted">${message}</li>`;
     runnerCountsList.innerHTML = `<li class="muted">${message}</li>`;
     timingBreakdownList.innerHTML = `<li class="muted">${message}</li>`;
+    testProgressList.innerHTML = `<li class="muted">${message}</li>`;
+    convenienceSymlinksList.innerHTML = `<li class="muted">${message}</li>`;
+    execRequestList.innerHTML = `<li class="muted">${message}</li>`;
   }
 
   // web-src/controller.ts
@@ -69344,6 +69618,30 @@ body.review-entry .tab-strip {
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("ul", { id: "build-metadata-list", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
             ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("section", { className: "panel grid-span-2", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { children: "Command Line" }),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("p", { className: "muted section-copy", children: [
+                "Raw invocation arguments from ",
+                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("code", { children: "unstructuredCommandLine" }),
+                ", with",
+                " ",
+                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("code", { children: "optionsParsed" }),
+                " as a fallback."
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("ul", { id: "command-line-list", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("section", { className: "panel", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { children: "Workspace Status" }),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("ul", { id: "workspace-status-list", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("section", { className: "panel", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { children: "Workspace Info" }),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("ul", { id: "workspace-info-list", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("section", { className: "panel grid-span-2", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { children: "Configurations" }),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("ul", { id: "configurations-list", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
+            ] }),
             /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("section", { className: "panel", children: [
               /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { children: "Host JVM Args" }),
               /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("ul", { id: "host-jvm-args-list", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
@@ -69489,6 +69787,15 @@ body.review-entry .tab-strip {
             /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("section", { className: "panel", children: [
               /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("h3", { children: "Failed Targets" }),
               /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("ul", { id: "failed-targets-list", children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("section", { className: "panel grid-span-2", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("h3", { children: "Target Summaries" }),
+              /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("p", { className: "muted section-copy", children: [
+                "Target-level aggregate result from ",
+                /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("code", { children: "targetSummary" }),
+                " events."
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("ul", { id: "target-summaries-list", children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
             ] })
           ] })
         ]

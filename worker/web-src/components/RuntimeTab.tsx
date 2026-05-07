@@ -20,6 +20,34 @@ export function RuntimeTab() {
             <li className="muted">No uploaded reviews yet.</li>
           </ul>
         </section>
+        <section className="panel grid-span-2">
+          <h3>Command Line</h3>
+          <p className="muted section-copy">
+            Raw invocation arguments from <code>unstructuredCommandLine</code>, with{" "}
+            <code>optionsParsed</code> as a fallback.
+          </p>
+          <ul id="command-line-list">
+            <li className="muted">No uploaded reviews yet.</li>
+          </ul>
+        </section>
+        <section className="panel">
+          <h3>Workspace Status</h3>
+          <ul id="workspace-status-list">
+            <li className="muted">No uploaded reviews yet.</li>
+          </ul>
+        </section>
+        <section className="panel">
+          <h3>Workspace Info</h3>
+          <ul id="workspace-info-list">
+            <li className="muted">No uploaded reviews yet.</li>
+          </ul>
+        </section>
+        <section className="panel grid-span-2">
+          <h3>Configurations</h3>
+          <ul id="configurations-list">
+            <li className="muted">No uploaded reviews yet.</li>
+          </ul>
+        </section>
         <section className="panel">
           <h3>Host JVM Args</h3>
           <ul id="host-jvm-args-list">

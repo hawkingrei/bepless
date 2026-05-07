@@ -29,6 +29,24 @@ export function ExecutionTab() {
             <li className="muted">No uploaded reviews yet.</li>
           </ul>
         </section>
+        <section className="panel">
+          <h3>Test Progress URIs</h3>
+          <ul id="test-progress-list">
+            <li className="muted">No uploaded reviews yet.</li>
+          </ul>
+        </section>
+        <section className="panel">
+          <h3>Convenience Symlinks</h3>
+          <ul id="convenience-symlinks-list">
+            <li className="muted">No uploaded reviews yet.</li>
+          </ul>
+        </section>
+        <section className="panel grid-span-2">
+          <h3>Exec Request</h3>
+          <ul id="exec-request-list">
+            <li className="muted">No uploaded reviews yet.</li>
+          </ul>
+        </section>
       </div>
     </section>
   );
