@@ -27129,6 +27129,7 @@ body.review-entry .tab-strip {
   var timelineDetail;
   var timelineFilterButtons = [];
   var timelineLimit;
+  var buildMetadataList;
   var hostJvmArgsList;
   var jvmMetricsList;
   var timingMetricsList;
@@ -27169,6 +27170,7 @@ body.review-entry .tab-strip {
       document.querySelectorAll("[data-timeline-filter]")
     );
     timelineLimit = document.getElementById("timeline-limit");
+    buildMetadataList = document.getElementById("build-metadata-list");
     hostJvmArgsList = document.getElementById("host-jvm-args-list");
     jvmMetricsList = document.getElementById("jvm-metrics-list");
     timingMetricsList = document.getElementById("timing-metrics-list");
@@ -27414,6 +27416,7 @@ body.review-entry .tab-strip {
     const flakyAttemptsByLabel = /* @__PURE__ */ new Map();
     const cacheMissReasons = /* @__PURE__ */ new Map();
     const hostJvmArgs = /* @__PURE__ */ new Set();
+    const buildMetadata = {};
     const failedTargets = [];
     const runnerCounts = {};
     const testStrategyCounts = {};
@@ -27494,6 +27497,14 @@ body.review-entry .tab-strip {
       const payload = envelope.bazel_event_proto_base64 ? null : envelope;
       const event2 = payload;
       if (!event2) continue;
+      if (event2.buildMetadata?.metadata && typeof event2.buildMetadata.metadata === "object") {
+        for (const [key, value] of Object.entries(event2.buildMetadata.metadata)) {
+          const normalizedValue = String(value ?? "").trim();
+          if (normalizedValue) {
+            buildMetadata[String(key)] = normalizedValue;
+          }
+        }
+      }
       const buildMetrics = event2.buildMetrics;
       if (buildMetrics && buildMetrics.actionSummary) {
         const actionSummary = buildMetrics.actionSummary;
@@ -27985,6 +27996,7 @@ body.review-entry .tab-strip {
         findings
       },
       cacheOverview,
+      buildMetadata,
       hostJvmArgs: Array.from(hostJvmArgs),
       jvmMetrics,
       timingMetrics,
@@ -68150,6 +68162,20 @@ body.review-entry .tab-strip {
     }
     return events;
   }
+  function metadataSortRank(key) {
+    if (key.startsWith("ci.")) return 0;
+    if (key.startsWith("pr.")) return 1;
+    if (key.startsWith("git.")) return 2;
+    return 3;
+  }
+  function renderMetadataValue(value) {
+    const text = String(value || "");
+    const escapedText = escapeHtml(text);
+    if (/^https?:\/\//.test(text)) {
+      return `<a class="attempt-output-link" href="${escapedText}" target="_blank" rel="noreferrer">${escapedText}</a>`;
+    }
+    return `<span class="mono">${escapedText}</span>`;
+  }
   var timelineInstance = null;
   function timelineGroupLabel(group) {
     if (group === "build") return "Build";
@@ -68357,6 +68383,23 @@ body.review-entry .tab-strip {
   }
   function renderBrowserInsights(insights, options) {
     renderTimeline(insights, options);
+    createListItems(
+      buildMetadataList,
+      Object.entries(insights.buildMetadata || {}).sort((left, right) => {
+        const rankDelta = metadataSortRank(left[0]) - metadataSortRank(right[0]);
+        return rankDelta || String(left[0]).localeCompare(String(right[0]));
+      }),
+      ([key, value]) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${escapeHtml(key)}</strong>
+          <span class="badge">${escapeHtml(String(key).split(".")[0] || "metadata")}</span>
+        </div>
+        <div class="muted detail-line">${renderMetadataValue(String(value))}</div>
+      </li>
+    `,
+      "No build metadata reported."
+    );
     createListItems(
       hostJvmArgsList,
       insights.hostJvmArgs,
@@ -68667,6 +68710,7 @@ body.review-entry .tab-strip {
     keywordList.innerHTML = `<li class="muted">${message}</li>`;
     timelineSummary.textContent = message;
     timelineChart.innerHTML = `<div class="muted">${message}</div>`;
+    buildMetadataList.innerHTML = `<li class="muted">${message}</li>`;
     hostJvmArgsList.innerHTML = `<li class="muted">${message}</li>`;
     jvmMetricsList.innerHTML = `<li class="muted">${message}</li>`;
     timingMetricsList.innerHTML = `<li class="muted">${message}</li>`;
@@ -69291,6 +69335,15 @@ body.review-entry .tab-strip {
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(SectionHeading, { eyebrow: "Invocation Runtime", title: "JVM And Timing" }),
           /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("div", { className: "grid-2", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("section", { className: "panel grid-span-2", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { children: "Build Metadata" }),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("p", { className: "muted section-copy", children: [
+                "Metadata reported by ",
+                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("code", { children: "--build_metadata" }),
+                ", including CI, git, and PR fields."
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("ul", { id: "build-metadata-list", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })
+            ] }),
             /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("section", { className: "panel", children: [
               /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("h3", { children: "Host JVM Args" }),
               /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("ul", { id: "host-jvm-args-list", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("li", { className: "muted", children: "No uploaded reviews yet." }) })

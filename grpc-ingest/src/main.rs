@@ -762,7 +762,9 @@ fn classify_normalized_event_health(
     if count_started == 0 && count_finished == 0 && count_build_metrics == 0 && count_action == 0 {
         return "missing_core";
     }
-    if count_finished == 0 && count_build_metrics == 0 && count_action == 0
+    if count_finished == 0
+        && count_build_metrics == 0
+        && count_action == 0
         && (count_test_result > 0 || count_test_summary > 0)
     {
         return "test_only";
@@ -964,6 +966,14 @@ fn convert_proto_event_to_json(event: &build_event_stream::BuildEvent) -> Option
         build_event_stream::build_event::Payload::BuildMetrics(metrics) => {
             object.insert("buildMetrics".to_string(), convert_build_metrics(metrics));
         }
+        build_event_stream::build_event::Payload::BuildMetadata(build_metadata) => {
+            object.insert(
+                "buildMetadata".to_string(),
+                json!({
+                    "metadata": build_metadata.metadata,
+                }),
+            );
+        }
         _ => return None,
     }
 
@@ -979,6 +989,9 @@ fn convert_event_id(id: Option<&build_event_stream::BuildEventId>) -> Option<Val
             json!({ "buildFinished": {} })
         }
         build_event_stream::build_event_id::Id::BuildMetrics(_) => json!({ "buildMetrics": {} }),
+        build_event_stream::build_event_id::Id::BuildMetadata(_) => {
+            json!({ "buildMetadata": {} })
+        }
         build_event_stream::build_event_id::Id::TargetConfigured(target) => json!({
             "targetConfigured": {
                 "label": target.label,

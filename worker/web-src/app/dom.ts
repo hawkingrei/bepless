@@ -16,6 +16,7 @@ export let timelineChart: HTMLElement | null;
 export let timelineDetail: HTMLElement | null;
 export let timelineFilterButtons: HTMLElement[] = [];
 export let timelineLimit: HTMLSelectElement | null;
+export let buildMetadataList: HTMLElement | null;
 export let hostJvmArgsList: HTMLElement | null;
 export let jvmMetricsList: HTMLElement | null;
 export let timingMetricsList: HTMLElement | null;
@@ -58,6 +59,7 @@ export function initDom() {
     document.querySelectorAll("[data-timeline-filter]"),
   ) as HTMLElement[];
   timelineLimit = document.getElementById("timeline-limit") as HTMLSelectElement | null;
+  buildMetadataList = document.getElementById("build-metadata-list");
   hostJvmArgsList = document.getElementById("host-jvm-args-list");
   jvmMetricsList = document.getElementById("jvm-metrics-list");
   timingMetricsList = document.getElementById("timing-metrics-list");

@@ -214,6 +214,7 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
   const flakyAttemptsByLabel = new Map();
   const cacheMissReasons = new Map();
   const hostJvmArgs = new Set();
+  const buildMetadata: Record<string, string> = {};
   const failedTargets = [];
   const runnerCounts = {};
   const testStrategyCounts = {};
@@ -302,6 +303,15 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
     const payload = envelope.bazel_event_proto_base64 ? null : envelope;
     const event = payload;
     if (!event) continue;
+
+    if (event.buildMetadata?.metadata && typeof event.buildMetadata.metadata === "object") {
+      for (const [key, value] of Object.entries(event.buildMetadata.metadata)) {
+        const normalizedValue = String(value ?? "").trim();
+        if (normalizedValue) {
+          buildMetadata[String(key)] = normalizedValue;
+        }
+      }
+    }
 
     const buildMetrics = event.buildMetrics;
     if (buildMetrics && buildMetrics.actionSummary) {
@@ -861,6 +871,7 @@ export function summarizeBrowserInsights(input, storedAnalysis = null) {
       findings,
     },
     cacheOverview,
+    buildMetadata,
     hostJvmArgs: Array.from(hostJvmArgs),
     jvmMetrics,
     timingMetrics,

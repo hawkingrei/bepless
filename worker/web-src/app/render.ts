@@ -1,6 +1,7 @@
 import {
   actionsList,
   artifactReferencesList,
+  buildMetadataList,
   cacheMissReasonsList,
   cacheOverviewList,
   compileTopList,
@@ -62,6 +63,22 @@ function filterTimelineEvents(events: any[], filter: string) {
     return events.filter((event) => event.failed === true);
   }
   return events;
+}
+
+function metadataSortRank(key: string) {
+  if (key.startsWith("ci.")) return 0;
+  if (key.startsWith("pr.")) return 1;
+  if (key.startsWith("git.")) return 2;
+  return 3;
+}
+
+function renderMetadataValue(value: string) {
+  const text = String(value || "");
+  const escapedText = escapeHtml(text);
+  if (/^https?:\/\//.test(text)) {
+    return `<a class="attempt-output-link" href="${escapedText}" target="_blank" rel="noreferrer">${escapedText}</a>`;
+  }
+  return `<span class="mono">${escapedText}</span>`;
 }
 
 let timelineInstance: Timeline | null = null;
@@ -328,6 +345,24 @@ export function renderFlakyAttempts(insights: any, label: string | null) {
 
 export function renderBrowserInsights(insights: any, options: AnalysisRenderOptions) {
   renderTimeline(insights, options);
+
+  createListItems(
+    buildMetadataList,
+    Object.entries(insights.buildMetadata || {}).sort((left: any, right: any) => {
+      const rankDelta = metadataSortRank(left[0]) - metadataSortRank(right[0]);
+      return rankDelta || String(left[0]).localeCompare(String(right[0]));
+    }),
+    ([key, value]) => `
+      <li>
+        <div class="split-line">
+          <strong class="mono">${escapeHtml(key)}</strong>
+          <span class="badge">${escapeHtml(String(key).split(".")[0] || "metadata")}</span>
+        </div>
+        <div class="muted detail-line">${renderMetadataValue(String(value))}</div>
+      </li>
+    `,
+    "No build metadata reported.",
+  );
 
   createListItems(
     hostJvmArgsList,
@@ -672,6 +707,7 @@ export function resetReviewPanels(message = "No uploaded reviews yet.") {
   keywordList.innerHTML = `<li class="muted">${message}</li>`;
   timelineSummary.textContent = message;
   timelineChart.innerHTML = `<div class="muted">${message}</div>`;
+  buildMetadataList.innerHTML = `<li class="muted">${message}</li>`;
   hostJvmArgsList.innerHTML = `<li class="muted">${message}</li>`;
   jvmMetricsList.innerHTML = `<li class="muted">${message}</li>`;
   timingMetricsList.innerHTML = `<li class="muted">${message}</li>`;

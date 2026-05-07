@@ -1054,7 +1054,11 @@ async fn store_ingest_review(
     uploaded_at_ms: i64,
 ) -> Result<()> {
     let metadata = extract_ingest_metadata(raw_ingest_body);
-    log_normalized_event_counts("store_ingest_review_normalized_counts", &metadata, normalized_ingest_body);
+    log_normalized_event_counts(
+        "store_ingest_review_normalized_counts",
+        &metadata,
+        normalized_ingest_body,
+    );
     let review_body_pointer = store_review_body(
         env,
         metadata.invocation_id.as_deref(),
@@ -1071,7 +1075,11 @@ async fn store_ingest_review(
     .await
 }
 
-fn log_normalized_event_counts(event_name: &str, metadata: &IngestMetadata, normalized_ingest_body: &str) {
+fn log_normalized_event_counts(
+    event_name: &str,
+    metadata: &IngestMetadata,
+    normalized_ingest_body: &str,
+) {
     let counts = summarize_normalized_event_counts(normalized_ingest_body);
     let count_started = counts.get("started").copied().unwrap_or(0);
     let count_finished = counts.get("finished").copied().unwrap_or(0);
@@ -1121,7 +1129,10 @@ fn log_normalized_event_counts(event_name: &str, metadata: &IngestMetadata, norm
             ("count_action", count_action.to_string()),
             ("count_test_result", count_test_result.to_string()),
             ("count_test_summary", count_test_summary.to_string()),
-            ("count_target_configured", count_target_configured.to_string()),
+            (
+                "count_target_configured",
+                count_target_configured.to_string(),
+            ),
             ("count_target_completed", count_target_completed.to_string()),
             ("has_started", (count_started > 0).to_string()),
             ("has_finished", (count_finished > 0).to_string()),
@@ -1147,7 +1158,9 @@ fn classify_normalized_event_health(
     if count_started == 0 && count_finished == 0 && count_build_metrics == 0 && count_action == 0 {
         return "missing_core";
     }
-    if count_finished == 0 && count_build_metrics == 0 && count_action == 0
+    if count_finished == 0
+        && count_build_metrics == 0
+        && count_action == 0
         && (count_test_result > 0 || count_test_summary > 0)
     {
         return "test_only";
@@ -1743,7 +1756,10 @@ fn convert_proto_event_to_json(event: &build_event_stream::BuildEvent) -> Option
             object.insert("action".to_string(), convert_action_executed(action));
         }
         build_event_stream::build_event::Payload::NamedSetOfFiles(named_set) => {
-            object.insert("namedSetOfFiles".to_string(), convert_named_set_of_files(named_set));
+            object.insert(
+                "namedSetOfFiles".to_string(),
+                convert_named_set_of_files(named_set),
+            );
         }
         build_event_stream::build_event::Payload::TestSummary(test_summary) => {
             object.insert(
@@ -1773,6 +1789,14 @@ fn convert_proto_event_to_json(event: &build_event_stream::BuildEvent) -> Option
         build_event_stream::build_event::Payload::BuildMetrics(metrics) => {
             object.insert("buildMetrics".to_string(), convert_build_metrics(metrics));
         }
+        build_event_stream::build_event::Payload::BuildMetadata(build_metadata) => {
+            object.insert(
+                "buildMetadata".to_string(),
+                json!({
+                    "metadata": build_metadata.metadata,
+                }),
+            );
+        }
         build_event_stream::build_event::Payload::BuildToolLogs(build_tool_logs) => {
             object.insert(
                 "buildToolLogs".to_string(),
@@ -1794,6 +1818,9 @@ fn convert_event_id(id: Option<&build_event_stream::BuildEventId>) -> Option<Val
             json!({ "buildFinished": {} })
         }
         build_event_stream::build_event_id::Id::BuildMetrics(_) => json!({ "buildMetrics": {} }),
+        build_event_stream::build_event_id::Id::BuildMetadata(_) => {
+            json!({ "buildMetadata": {} })
+        }
         build_event_stream::build_event_id::Id::NamedSet(named_set) => json!({
             "namedSet": {
                 "id": named_set.id.clone(),
@@ -2387,7 +2414,10 @@ fn html_response() -> Result<Response> {
 }
 
 fn set_no_store_headers(headers: &mut Headers) -> Result<()> {
-    headers.set("cache-control", "no-store, no-cache, must-revalidate, max-age=0")?;
+    headers.set(
+        "cache-control",
+        "no-store, no-cache, must-revalidate, max-age=0",
+    )?;
     headers.set("pragma", "no-cache")?;
     headers.set("expires", "0")?;
     Ok(())

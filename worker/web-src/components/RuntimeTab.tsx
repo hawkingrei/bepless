@@ -11,6 +11,15 @@ export function RuntimeTab() {
     >
       <SectionHeading eyebrow="Invocation Runtime" title="JVM And Timing" />
       <div className="grid-2">
+        <section className="panel grid-span-2">
+          <h3>Build Metadata</h3>
+          <p className="muted section-copy">
+            Metadata reported by <code>--build_metadata</code>, including CI, git, and PR fields.
+          </p>
+          <ul id="build-metadata-list">
+            <li className="muted">No uploaded reviews yet.</li>
+          </ul>
+        </section>
         <section className="panel">
           <h3>Host JVM Args</h3>
           <ul id="host-jvm-args-list">
